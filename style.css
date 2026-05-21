@@ -1,0 +1,340 @@
+/* ─── Reset & Base ─────────────────────────────────────── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --serif: 'Cormorant Garamond', Georgia, serif;
+  --sans:  'Inter', system-ui, sans-serif;
+  --ink:   rgba(240, 235, 224, 0.92);
+  --dim:   rgba(240, 235, 224, 0.45);
+  --ghost: rgba(240, 235, 224, 0.22);
+}
+
+html { font-size: 16px; }
+
+body {
+  background: #08080f;
+  color: var(--ink);
+  overflow-x: hidden;
+}
+
+@media (pointer: fine) {
+  body { cursor: none; }
+}
+
+/* ─── Intro veil ────────────────────────────────────────── */
+.intro-veil {
+  position: fixed;
+  inset: 0;
+  background: #08080f;
+  z-index: 9000;
+  pointer-events: none;
+}
+
+/* ─── Three.js canvas ──────────────────────────────────── */
+#bg-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+}
+
+/* ─── Film grain ───────────────────────────────────────── */
+.noise {
+  position: fixed;
+  inset: -100px;
+  width: calc(100% + 200px);
+  height: calc(100% + 200px);
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 300px 300px;
+  animation: grain 0.4s steps(1) infinite;
+}
+
+@keyframes grain {
+  0%  { transform: translate(0,    0);    }
+  10% { transform: translate(-3%,  -4%);  }
+  20% { transform: translate(4%,   3%);   }
+  30% { transform: translate(-2%,  4%);   }
+  40% { transform: translate(3%,   -3%);  }
+  50% { transform: translate(-4%,  2%);   }
+  60% { transform: translate(2%,   -2%);  }
+  70% { transform: translate(-3%,  3%);   }
+  80% { transform: translate(4%,   -4%);  }
+  90% { transform: translate(-1%,  1%);   }
+}
+
+/* ─── Progress bar ─────────────────────────────────────── */
+.progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--ghost);
+  z-index: 500;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: rgba(240, 235, 224, 0.55);
+}
+
+/* ─── Navigation ───────────────────────────────────────── */
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  padding: 2rem 2.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  mix-blend-mode: difference;
+}
+
+.nav-brand {
+  font-family: var(--sans);
+  font-size: 0.65rem;
+  font-weight: 200;
+  letter-spacing: 0.55em;
+  text-transform: uppercase;
+  color: white;
+  opacity: 0.45;
+}
+
+.nav-dots {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.nav-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 0;
+  transition: background 0.4s ease, transform 0.4s ease;
+}
+
+.nav-dot.active {
+  background: rgba(255, 255, 255, 0.85);
+  transform: scale(1.7);
+}
+
+@media (pointer: fine) {
+  .nav-dot { cursor: none; }
+  .nav-dot:hover { background: rgba(255, 255, 255, 0.55); }
+}
+
+/* ─── Story ────────────────────────────────────────────── */
+#story { position: relative; z-index: 10; }
+
+/* ─── Chapters ─────────────────────────────────────────── */
+.chapter {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6rem 2rem;
+}
+
+.chapter::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 75% 55% at 50% 50%,
+    rgba(0, 0, 0, 0.05) 0%,
+    rgba(0, 0, 0, 0.52) 100%
+  );
+  pointer-events: none;
+}
+
+.chapter-inner {
+  position: relative;
+  max-width: 660px;
+  width: 100%;
+  text-align: center;
+}
+
+/* Eyebrow row */
+.chapter-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 2.2rem;
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+.ch-num {
+  font-family: var(--sans);
+  font-size: 0.6rem;
+  font-weight: 300;
+  letter-spacing: 0.45em;
+  color: var(--dim);
+}
+
+.ch-rule {
+  display: inline-block;
+  width: 28px;
+  height: 1px;
+  background: var(--ghost);
+}
+
+.ch-label {
+  font-family: var(--sans);
+  font-size: 0.6rem;
+  font-weight: 300;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* Title */
+.chapter-title {
+  font-family: var(--serif);
+  font-size: clamp(2.6rem, 6.5vw, 5.8rem);
+  font-weight: 300;
+  line-height: 1.18;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-bottom: 2.4rem;
+  opacity: 0;
+  transform: translateY(36px);
+  clip-path: inset(0 0 100% 0);
+}
+
+.chapter-title em {
+  font-style: italic;
+  color: rgba(240, 235, 224, 0.55);
+}
+
+/* Body text */
+.chapter-body {
+  font-family: var(--serif);
+  font-size: clamp(0.95rem, 1.8vw, 1.15rem);
+  font-weight: 300;
+  font-style: italic;
+  line-height: 2;
+  color: rgba(240, 235, 224, 0.5);
+  opacity: 0;
+  transform: translateY(22px);
+}
+
+/* Decorative line */
+.ch-line {
+  margin: 2.8rem auto 0;
+  width: 1px;
+  height: 0;
+  background: linear-gradient(to bottom, var(--ghost), transparent);
+}
+
+/* Story end */
+.story-end {
+  margin-top: 3.5rem;
+  opacity: 0;
+  transform: translateY(18px);
+}
+
+.story-end-glyph {
+  display: block;
+  font-family: var(--serif);
+  font-size: 2.2rem;
+  color: var(--ghost);
+  margin-bottom: 0.6rem;
+}
+
+.story-end-text {
+  font-family: var(--sans);
+  font-size: 0.6rem;
+  letter-spacing: 0.55em;
+  text-transform: uppercase;
+  color: var(--ghost);
+}
+
+/* ─── Scroll hint ──────────────────────────────────────── */
+.scroll-hint {
+  position: absolute;
+  bottom: 2.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  opacity: 0;
+  color: rgba(240, 235, 224, 0.3);
+  animation: hintFade 1s ease 2.2s forwards;
+}
+
+.scroll-hint span {
+  font-family: var(--sans);
+  font-size: 0.55rem;
+  letter-spacing: 0.45em;
+  text-transform: uppercase;
+}
+
+.scroll-hint svg {
+  animation: arrowBounce 2s ease infinite;
+}
+
+@keyframes arrowBounce {
+  0%, 100% { transform: translateY(0);   }
+  50%       { transform: translateY(6px); }
+}
+
+@keyframes hintFade {
+  to { opacity: 1; }
+}
+
+/* ─── Custom cursor ────────────────────────────────────── */
+.cursor-dot {
+  position: fixed;
+  width: 7px;
+  height: 7px;
+  background: rgba(240, 235, 224, 0.9);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+  mix-blend-mode: difference;
+  display: none;
+}
+
+.cursor-ring {
+  position: fixed;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(240, 235, 224, 0.28);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9998;
+  transform: translate(-50%, -50%);
+  display: none;
+}
+
+@media (pointer: fine) {
+  .cursor-dot  { display: block; }
+  .cursor-ring { display: block; }
+}
+
+/* ─── Responsive tweaks ────────────────────────────────── */
+@media (max-width: 640px) {
+  .nav { padding: 1.4rem 1.4rem; }
+  .chapter { padding: 5rem 1.4rem; }
+  .nav-brand { display: none; }
+}

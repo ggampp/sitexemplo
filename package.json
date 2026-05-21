@@ -1,0 +1,8 @@
+{
+  "name": "the-wanderer",
+  "version": "1.0.0",
+  "description": "Storytelling site – Three.js + GSAP ScrollTrigger + Lenis",
+  "scripts": {
+    "start": "npx serve . --listen 3000"
+  }
+}

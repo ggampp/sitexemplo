@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Wanderer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Inter:wght@200;300;400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+</head>
+<body>
+
+  <!-- Intro veil -->
+  <div class="intro-veil" id="intro-veil"></div>
+
+  <!-- Three.js background -->
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- Film grain overlay -->
+  <div class="noise" aria-hidden="true"></div>
+
+  <!-- Top progress bar -->
+  <div class="progress-bar" aria-hidden="true">
+    <div class="progress-fill" id="progress-fill"></div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <span class="nav-brand">The Wanderer</span>
+    <div class="nav-dots" role="navigation" aria-label="Chapter navigation">
+      <button class="nav-dot active" data-chapter="0" aria-label="Chapter I"></button>
+      <button class="nav-dot"        data-chapter="1" aria-label="Chapter II"></button>
+      <button class="nav-dot"        data-chapter="2" aria-label="Chapter III"></button>
+      <button class="nav-dot"        data-chapter="3" aria-label="Chapter IV"></button>
+      <button class="nav-dot"        data-chapter="4" aria-label="Chapter V"></button>
+    </div>
+  </nav>
+
+  <!-- Story -->
+  <main id="story">
+
+    <section class="chapter" id="chapter-0">
+      <div class="chapter-inner">
+        <div class="chapter-eyebrow">
+          <span class="ch-num">I</span>
+          <span class="ch-rule"></span>
+          <span class="ch-label">The Silence Before</span>
+        </div>
+        <h2 class="chapter-title">
+          Before the world<br><em>learned to breathe</em>
+        </h2>
+        <p class="chapter-body">
+          There was only the hum of possibility —<br>
+          a vast and breathing dark that held<br>
+          the weight of everything not yet born.<br>
+          The wanderer stood at the edge of all known things,<br>
+          watching the universe fold into itself<br>
+          like a letter written to no one, and everyone.
+        </p>
+        <div class="ch-line"></div>
+      </div>
+      <div class="scroll-hint" aria-hidden="true">
+        <span>Scroll</span>
+        <svg width="12" height="22" viewBox="0 0 12 22" fill="none">
+          <line x1="6" y1="1" x2="6" y2="21" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+          <polyline points="1,16 6,21 11,16" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+      </div>
+    </section>
+
+    <section class="chapter" id="chapter-1">
+      <div class="chapter-inner">
+        <div class="chapter-eyebrow">
+          <span class="ch-num">II</span>
+          <span class="ch-rule"></span>
+          <span class="ch-label">The Awakening</span>
+        </div>
+        <h2 class="chapter-title">
+          Something stirred<br><em>beneath the still</em>
+        </h2>
+        <p class="chapter-body">
+          Colors that had no names bloomed like ink in water,<br>
+          spreading through the silence with the slow confidence<br>
+          of something that has always been there, waiting.<br>
+          The wanderer stepped forward into the becoming —<br>
+          and the world opened like a palm.
+        </p>
+        <div class="ch-line"></div>
+      </div>
+    </section>
+
+    <section class="chapter" id="chapter-2">
+      <div class="chapter-inner">
+        <div class="chapter-eyebrow">
+          <span class="ch-num">III</span>
+          <span class="ch-rule"></span>
+          <span class="ch-label">Into the Abyss</span>
+        </div>
+        <h2 class="chapter-title">
+          The storms<br><em>did not frighten</em>
+        </h2>
+        <p class="chapter-body">
+          They clarified. Every bolt of lightning<br>
+          was a word the sky had been meaning to say<br>
+          for a thousand years of patient waiting.<br>
+          The wanderer walked through the howling<br>
+          and found that it was only wind —<br>
+          and wind has no memory of its origins.
+        </p>
+        <div class="ch-line"></div>
+      </div>
+    </section>
+
+    <section class="chapter" id="chapter-3">
+      <div class="chapter-inner">
+        <div class="chapter-eyebrow">
+          <span class="ch-num">IV</span>
+          <span class="ch-rule"></span>
+          <span class="ch-label">The Revelation</span>
+        </div>
+        <h2 class="chapter-title">
+          At the center<br><em>lived a stillness</em>
+        </h2>
+        <p class="chapter-body">
+          More profound than silence. More resonant than sound.<br>
+          The wanderer recognized it the way you recognize<br>
+          a face you've never seen but always known —<br>
+          as the quiet note beneath all music,<br>
+          the pause that makes the song mean something.
+        </p>
+        <div class="ch-line"></div>
+      </div>
+    </section>
+
+    <section class="chapter" id="chapter-4">
+      <div class="chapter-inner">
+        <div class="chapter-eyebrow">
+          <span class="ch-num">V</span>
+          <span class="ch-rule"></span>
+          <span class="ch-label">New Dawn</span>
+        </div>
+        <h2 class="chapter-title">
+          When the light<br><em>returned, unhurried</em>
+        </h2>
+        <p class="chapter-body">
+          It found a different wanderer<br>
+          standing in the same shoes.<br>
+          The journey had not ended —<br>
+          it had only just begun to understand itself.<br>
+          And the world, older and new at once,<br>
+          exhaled for the very first time.
+        </p>
+        <div class="ch-line"></div>
+        <div class="story-end">
+          <span class="story-end-glyph">∞</span>
+          <p class="story-end-text">The End</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Custom cursor (pointer devices only) -->
+  <div class="cursor-dot"  id="cursor-dot"  aria-hidden="true"></div>
+  <div class="cursor-ring" id="cursor-ring" aria-hidden="true"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "lenis": "https://esm.sh/lenis@1.1.14"
+    }
+  }
+  </script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
