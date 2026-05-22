@@ -1,8 +1,8 @@
 {
-  "name": "the-wanderer",
+  "name": "motion-moments",
   "version": "1.0.0",
-  "description": "Storytelling site – Three.js + GSAP ScrollTrigger + Lenis",
+  "description": "Interactive photography wall inspired by the reference video",
   "scripts": {
-    "start": "npx serve . --listen 3000"
+    "start": "python -m http.server 3000"
   }
 }

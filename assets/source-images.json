@@ -1,0 +1,21 @@
+{
+  "wall_count": 160,
+  "features": [
+    {
+      "output": "feature-tachyonix.jpg",
+      "source": "Tachyonix_Background_03.png"
+    },
+    {
+      "output": "feature-salvador.jpg",
+      "source": "GettyImages-127674813-57a36b3f3df78cf4590bb491.jpg"
+    },
+    {
+      "output": "feature-porto.jpg",
+      "source": "Praias-de-porto-de-galinhas.webp"
+    },
+    {
+      "output": "feature-amazonas.jpg",
+      "source": "teatroamazonasabre.jpeg"
+    }
+  ]
+}
