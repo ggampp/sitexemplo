@@ -116,11 +116,11 @@ a {
   background-repeat: no-repeat;
   background-color: #0c0d0e;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 8px 18px rgba(0, 0, 0, 0.4);
-  filter: saturate(1.05) contrast(1.02) brightness(0.92);
+  filter: saturate(1.05) contrast(1.02) brightness(0.95);
   outline: none;
   transform: translate3d(var(--push-x, 0), var(--push-y, 0), 0) scale(var(--tile-scale, 1));
   transform-origin: center;
-  transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1), filter 360ms ease, opacity 360ms ease, box-shadow 360ms ease;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), filter 220ms ease, opacity 220ms ease, box-shadow 220ms ease;
   cursor: pointer;
 }
 
@@ -133,28 +133,17 @@ a {
   pointer-events: none;
 }
 
-.tile.is-lifted {
-  z-index: 3;
-  --push-y: -10px;
-  --tile-scale: 1.04;
-  filter: saturate(1.2) contrast(1.05) brightness(0.94);
-}
-
-.tile.is-muted {
-  opacity: 0.66;
-}
-
-.tile:is(:hover, :focus-visible, .is-hovered) {
+.tile.is-hovered,
+.tile:focus-visible {
   z-index: 14;
-  --tile-scale: 1.18;
+  --tile-scale: 1.35;
   opacity: 1;
-  filter: saturate(1.18) contrast(1.06) brightness(1.05);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 24px 48px rgba(0, 0, 0, 0.6);
+  filter: saturate(1.2) contrast(1.08) brightness(1.08);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 28px 56px rgba(0, 0, 0, 0.65);
 }
 
 .tile.is-neighbor {
   z-index: 4;
-  opacity: 0.9;
 }
 
 .float-layer {

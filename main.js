@@ -81,14 +81,17 @@ function buildWall() {
     tile.dataset.index = String(index);
     tile.setAttribute("aria-label", `Open ${moment.title}`);
 
-    if (index % 11 === 0 || index % 17 === 0) tile.classList.add("is-lifted");
-    if (index % 7 === 0) tile.classList.add("is-muted");
-
     tile.addEventListener("pointerenter", () => setHoveredTile(index));
     tile.addEventListener("focus", () => setHoveredTile(index));
     tile.addEventListener("pointerleave", clearHoveredTiles);
     tile.addEventListener("blur", clearHoveredTiles);
-    tile.addEventListener("click", () => openMoment(index, tile));
+    tile.addEventListener("click", () => {
+      if (activeIndex >= 0) {
+        closeMoment();
+        return;
+      }
+      openMoment(index, tile);
+    });
 
     fragment.appendChild(tile);
   });
