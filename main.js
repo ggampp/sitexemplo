@@ -17,10 +17,11 @@ const rightActions = document.querySelector(".right-actions");
 
 const moments = Array.isArray(window.MOMENT_IMAGES) ? window.MOMENT_IMAGES : [];
 
-const tilePattern = [
-  [2, 1], [1, 2], [2, 2], [3, 1], [1, 1], [2, 1], [1, 2], [3, 2],
-  [2, 1], [1, 1], [2, 2], [1, 2], [3, 1], [2, 1], [1, 1], [2, 2]
-];
+const layoutOptions = {
+  desktop: { width: 2400, targetHeight: 220, gap: 6 },
+  mobile: { width: 1600, targetHeight: 150, gap: 4 }
+};
+const tilePositions = new Map();
 
 let activeIndex = -1;
 let manualLight = false;
@@ -66,17 +67,76 @@ function centerWallInitial() {
   setPan((stageRect.width - wallRect.width) / 2, (stageRect.height - wallRect.height) / 2);
 }
 
+function getLayoutOptions() {
+  return window.matchMedia("(max-width: 980px)").matches ? layoutOptions.mobile : layoutOptions.desktop;
+}
+
+function computeJustifiedRows(items, opts) {
+  const { width, targetHeight, gap } = opts;
+  const rows = [];
+  let current = [];
+  let aspectSum = 0;
+
+  for (const item of items) {
+    const aspect = Math.max(0.3, Math.min(3.2, item.aspectRatio || item.width / item.height || 1));
+    current.push({ ...item, aspect });
+    aspectSum += aspect;
+    const projected = aspectSum * targetHeight + gap * (current.length - 1);
+    if (projected >= width) {
+      const rowHeight = (width - gap * (current.length - 1)) / aspectSum;
+      rows.push({ items: current, height: rowHeight });
+      current = [];
+      aspectSum = 0;
+    }
+  }
+  if (current.length) {
+    const projected = aspectSum * targetHeight + gap * (current.length - 1);
+    const rowHeight = projected > width * 0.8 ? (width - gap * (current.length - 1)) / aspectSum : targetHeight;
+    rows.push({ items: current, height: rowHeight });
+  }
+  return rows;
+}
+
+function layoutWall() {
+  const opts = getLayoutOptions();
+  const rows = computeJustifiedRows(moments, opts);
+  const gap = opts.gap;
+  tilePositions.clear();
+  let y = 0;
+
+  rows.forEach(row => {
+    let x = 0;
+    row.items.forEach(item => {
+      const w = item.aspect * row.height;
+      tilePositions.set(item.index, { x, y, w, h: row.height, cx: x + w / 2, cy: y + row.height / 2 });
+      x += w + gap;
+    });
+    y += row.height + gap;
+  });
+
+  const totalHeight = y - gap;
+  const padding = 6;
+  wall.style.width = `${opts.width + padding * 2}px`;
+  wall.style.height = `${totalHeight + padding * 2}px`;
+
+  document.querySelectorAll(".tile").forEach(tile => {
+    const idx = Number(tile.dataset.index);
+    const pos = tilePositions.get(idx);
+    if (!pos) return;
+    tile.style.left = `${pos.x}px`;
+    tile.style.top = `${pos.y}px`;
+    tile.style.width = `${pos.w}px`;
+    tile.style.height = `${pos.h}px`;
+  });
+}
+
 function buildWall() {
   const fragment = document.createDocumentFragment();
 
   moments.forEach((moment, index) => {
     const tile = document.createElement("button");
-    const [colSpan, rowSpan] = tilePattern[index % tilePattern.length];
-
     tile.type = "button";
     tile.className = "tile";
-    tile.style.gridColumn = `span ${colSpan}`;
-    tile.style.gridRow = `span ${rowSpan}`;
     tile.style.backgroundImage = `url("${moment.image}")`;
     tile.dataset.index = String(index);
     tile.setAttribute("aria-label", `Open ${moment.title}`);
@@ -96,7 +156,11 @@ function buildWall() {
     fragment.appendChild(tile);
   });
 
+  // attach indices to manifest entries for layout
+  moments.forEach((m, i) => { m.index = i; });
+
   wall.appendChild(fragment);
+  layoutWall();
 }
 
 function buildFloatingTiles() {
@@ -112,33 +176,37 @@ function buildFloatingTiles() {
   });
 }
 
-function getTilePosition(index) {
-  const columns = window.matchMedia("(max-width: 980px)").matches ? 14 : 20;
-  return {
-    x: index % columns,
-    y: Math.floor(index / columns)
-  };
-}
-
 function setHoveredTile(index) {
-  const origin = getTilePosition(index);
+  const origin = tilePositions.get(index);
+  if (!origin) return;
+  const reach = Math.max(origin.w, origin.h) * 1.6;
 
   document.querySelectorAll(".tile").forEach(tile => {
     const tileIndex = Number(tile.dataset.index);
-    const point = getTilePosition(tileIndex);
-    const dx = point.x - origin.x;
-    const dy = point.y - origin.y;
+    if (tileIndex === index) {
+      tile.classList.add("is-hovered");
+      tile.classList.remove("is-neighbor");
+      tile.style.removeProperty("--push-x");
+      tile.style.removeProperty("--push-y");
+      return;
+    }
+    const point = tilePositions.get(tileIndex);
+    if (!point) return;
+    const dx = point.cx - origin.cx;
+    const dy = point.cy - origin.cy;
     const distance = Math.hypot(dx, dy);
+    const isNeighbor = distance <= reach;
 
-    tile.classList.toggle("is-hovered", tileIndex === index);
-    tile.classList.toggle("is-neighbor", tileIndex !== index && distance <= 2.35);
+    tile.classList.remove("is-hovered");
+    tile.classList.toggle("is-neighbor", isNeighbor);
 
-    if (tileIndex !== index && distance <= 2.35) {
-      const angleX = dx === 0 ? 0 : Math.sign(dx);
-      const angleY = dy === 0 ? 0 : Math.sign(dy);
-      const strength = Math.max(8, 24 - distance * 5);
-      tile.style.setProperty("--push-x", `${angleX * strength}px`);
-      tile.style.setProperty("--push-y", `${angleY * strength}px`);
+    if (isNeighbor && distance > 0) {
+      const norm = 1 - Math.min(1, distance / reach);
+      const strength = 14 + norm * 22;
+      const ux = dx / distance;
+      const uy = dy / distance;
+      tile.style.setProperty("--push-x", `${ux * strength}px`);
+      tile.style.setProperty("--push-y", `${uy * strength}px`);
     } else {
       tile.style.removeProperty("--push-x");
       tile.style.removeProperty("--push-y");
@@ -337,6 +405,7 @@ if (document.readyState === "complete") {
 }
 
 window.addEventListener("resize", () => {
+  layoutWall();
   if (activeIndex < 0) {
     centerWallInitial();
   } else {
