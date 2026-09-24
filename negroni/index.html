@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Negroni Recipe</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Patrick+Hand&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #1c1819;
+      --panel: #2a2425;
+      --text: #f4ece3;
+      --muted: #a89c95;
+      --accent: #e27a78;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Patrick Hand", system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 16px;
+      min-height: 100vh;
+    }
+    .player {
+      width: min(100%, calc((100vh - 110px) * 16 / 9));
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .screen {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      background: #fbf7f0;
+      cursor: pointer;
+    }
+    canvas { display: block; width: 100%; height: 100%; }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 8px 12px;
+    }
+    .controls button {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 18px;
+      cursor: pointer;
+      border-radius: 8px;
+      padding: 6px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .controls button:hover { background: rgba(255, 255, 255, 0.08); }
+    .controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .controls svg { width: 20px; height: 20px; fill: currentColor; }
+    .controls svg[hidden] { display: none; }
+    .controls input[type="range"] { flex: 1; min-width: 60px; accent-color: var(--accent); }
+    .time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 18px; min-width: 88px; text-align: right; }
+    #export.recording { color: var(--accent); }
+    body.capture { padding: 0; background: #fbf7f0; display: block; }
+    body.capture .player { width: 1920px; }
+    body.capture .screen { border-radius: 0; box-shadow: none; width: 1920px; height: 1080px; }
+    body.capture .controls { display: none; }
+    @media (max-width: 560px) {
+      .export-label { display: none; }
+      .time { min-width: 0; font-size: 16px; }
+      .controls { gap: 6px; padding: 6px 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="player">
+    <div class="screen" id="screen">
+      <canvas id="stage" width="1920" height="1080" aria-label="Animated Negroni recipe: ice, gin, Campari and sweet vermouth poured into a rocks glass, stirred, and garnished with orange peel"></canvas>
+    </div>
+    <div class="controls">
+      <button id="play" type="button" aria-label="Play">
+        <svg id="icon-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+        <svg id="icon-pause" viewBox="0 0 24 24" hidden><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+      </button>
+      <button id="restart" type="button" aria-label="Restart">
+        <svg viewBox="0 0 24 24"><path d="M12 5V1.5L7 6.5l5 5V8a5 5 0 1 1-5 5H4.5A7.5 7.5 0 1 0 12 5z"/></svg>
+      </button>
+      <input id="scrub" type="range" min="0" max="30" step="0.01" value="0" aria-label="Seek" />
+      <span class="time" id="time">0:00 / 0:30</span>
+      <button id="export" type="button" aria-label="Export video">
+        <svg viewBox="0 0 24 24"><path d="M11 3h2v10.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4 3.6 3.6zM4 19h16v2H4z"/></svg>
+        <span class="export-label">Export video</span>
+      </button>
+    </div>
+  </main>
+
+  <script>
+  (() => {
+    'use strict';
+
+    // ------------------------------------------------------------------
+    // Setup
+    // ------------------------------------------------------------------
+    const W = 1920, H = 1080, DURATION = 30;
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+    const CAPTURE = new URLSearchParams(location.search).has('capture');
+    if (CAPTURE) document.body.classList.add('capture');
+
+    const C = {
+      paper: '#fbf7f0', ink: '#2a2326', muted: '#8a7d77',
+      pink: '#e27a78', pinkDark: '#c0585b',
+      glass: '#dcecf2', glassBase: '#c6dde7', rimFill: '#edf6f9',
+      ice: '#eef6fa', iceTop: '#ffffff', iceSide: '#cde2eb',
+      gin: '#afd6e1', campari: '#d3263a', negroni: '#8b1c2c',
+      orange: '#f4a534', orangeDark: '#d9781f', pith: '#ffe2ad',
+      steel: '#c3cbd1', star: '#ffd166'
+    };
+    const F_DISPLAY = '"Luckiest Guy", "Arial Black", sans-serif';
+    const F_HAND = '"Patrick Hand", "Comic Sans MS", cursive';
+
+    // ------------------------------------------------------------------
+    // Math / easing / color helpers
+    // ------------------------------------------------------------------
+    const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const prog = (t, a, b) => clamp((t - a) / (b - a));
+    const ease = {
+      inOut: t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+      out: t => 1 - Math.pow(1 - t, 3),
+      in: t => t * t * t,
+      back: t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
+    };
+
+    function hash(a, b = 0, c = 0) {
+      let h = Math.imul(a | 0, 374761393) ^ Math.imul((b | 0) + 1013, 668265263) ^ Math.imul((c | 0) + 7919, 1442695041);
+      h = Math.imul(h ^ (h >>> 15), 2246822519);
+      h = Math.imul(h ^ (h >>> 13), 3266489917);
+      h ^= h >>> 16;
+      return ((h >>> 0) / 4294967295) * 2 - 1;
+    }
+
+    const hexRgb = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+    const mix = (a, b, t) => '#' + hexRgb(a).map((v, i) => Math.round(lerp(v, hexRgb(b)[i], clamp(t))).toString(16).padStart(2, '0')).join('');
+    const shade = (h, amt) => (amt < 0 ? mix(h, '#000000', -amt) : mix(h, '#ffffff', amt));
+    const rgba = (h, a) => { const [r, g, b] = hexRgb(h); return `rgba(${r},${g},${b},${a})`; };
+
+    // ------------------------------------------------------------------
+    // Hand-drawn primitives. BOIL changes 8x per second so every outline
+    // "boils" like a traditionally animated line.
+    // ------------------------------------------------------------------
+    let BOIL = 0;
+
+    function seg(a, b, step = 24) {
+      const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / step));
+      const out = [];
+      for (let i = 0; i < n; i++) out.push({ x: lerp(a.x, b.x, i / n), y: lerp(a.y, b.y, i / n) });
+      return out;
+    }
+    function poly(verts, closed = true, step = 24) {
+      let out = [];
+      const n = verts.length;
+      for (let i = 0; i < (closed ? n : n - 1); i++) out = out.concat(seg(verts[i], verts[(i + 1) % n], step));
+      if (!closed) out.push(verts[n - 1]);
+      return out;
+    }
+    function ell(cx, cy, rx, ry, a0 = 0, a1 = Math.PI * 2, n = 40) {
+      const out = [];
+      for (let i = 0; i <= n; i++) { const a = lerp(a0, a1, i / n); out.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) }); }
+      return out;
+    }
+    const ellClosed = (cx, cy, rx, ry, n = 44) => ell(cx, cy, rx, ry, 0, Math.PI * 2, n).slice(0, -1);
+    function roundRectPts(x, y, w, h, r, step = 22) {
+      const pts = [];
+      const corner = (cx, cy, a0) => ell(cx, cy, r, r, a0, a0 + Math.PI / 2, 5);
+      pts.push(...seg({ x: x + r, y }, { x: x + w - r, y }, step), ...corner(x + w - r, y + r, -Math.PI / 2));
+      pts.push(...seg({ x: x + w, y: y + r }, { x: x + w, y: y + h - r }, step), ...corner(x + w - r, y + h - r, 0));
+      pts.push(...seg({ x: x + w - r, y: y + h }, { x: x + r, y: y + h }, step), ...corner(x + r, y + h - r, Math.PI / 2));
+      pts.push(...seg({ x, y: y + h - r }, { x, y: y + r }, step), ...corner(x + r, y + r, Math.PI).slice(0, -1));
+      return pts;
+    }
+
+    function jitter(pts, seed, amp) {
+      return pts.map((p, i) => ({ x: p.x + hash(BOIL, seed, i * 2) * amp, y: p.y + hash(BOIL, seed, i * 2 + 1) * amp }));
+    }
+    function pathFrom(pts, closed) {
+      const n = pts.length;
+      ctx.beginPath();
+      if (n < 2) return;
+      if (closed) {
+        ctx.moveTo((pts[n - 1].x + pts[0].x) / 2, (pts[n - 1].y + pts[0].y) / 2);
+        for (let i = 0; i < n; i++) {
+          const p = pts[i], q = pts[(i + 1) % n];
+          ctx.quadraticCurveTo(p.x, p.y, (p.x + q.x) / 2, (p.y + q.y) / 2);
+        }
+        ctx.closePath();
+      } else {
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < n - 1; i++) {
+          const p = pts[i], q = pts[i + 1];
+          ctx.quadraticCurveTo(p.x, p.y, (p.x + q.x) / 2, (p.y + q.y) / 2);
+        }
+        ctx.lineTo(pts[n - 1].x, pts[n - 1].y);
+      }
+    }
+    function polyLength(pts, closed) {
+      let L = 0;
+      for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+      if (closed) L += Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y);
+      return L;
+    }
+
+    // Fill and/or stroke a wobbly shape. `reveal` < 1 draws the stroke on progressively.
+    function shape(pts, o = {}) {
+      const closed = o.closed !== false;
+      const seed = o.seed || 1;
+      const amp = o.amp ?? 1.4;
+      const j = jitter(pts, seed, amp);
+      ctx.save();
+      if (o.alpha != null) ctx.globalAlpha *= o.alpha;
+      if (o.fill) { pathFrom(j, closed); ctx.fillStyle = o.fill; ctx.fill(); }
+      if (o.stroke !== false) {
+        ctx.strokeStyle = o.stroke || C.ink;
+        ctx.lineWidth = o.lw || 4;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        const reveal = o.reveal ?? 1;
+        if (reveal <= 0) { ctx.restore(); return; }
+        if (reveal < 1) { const L = polyLength(j, closed); ctx.setLineDash([L * reveal, L * 2]); }
+        pathFrom(j, closed);
+        ctx.stroke();
+        if (o.double) {
+          ctx.globalAlpha *= 0.35;
+          ctx.lineWidth = (o.lw || 4) * 0.5;
+          pathFrom(jitter(pts, seed + 911, amp * 1.8), closed);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    function text(str, x, y, o = {}) {
+      const size = o.size || 40;
+      ctx.save();
+      if (o.alpha != null) ctx.globalAlpha *= o.alpha;
+      ctx.translate(x, y);
+      if (o.rot) ctx.rotate(o.rot);
+      ctx.font = `${size}px ${o.font || F_HAND}`;
+      ctx.textAlign = o.align || 'center';
+      ctx.textBaseline = o.base || 'alphabetic';
+      if (o.stroke) { ctx.lineJoin = 'round'; ctx.strokeStyle = o.stroke; ctx.lineWidth = o.lw || 6; ctx.strokeText(str, 0, 0); }
+      ctx.fillStyle = o.color || C.ink;
+      ctx.fillText(str, 0, 0);
+      ctx.restore();
+    }
+
+    // Chunky extruded lettering, like the reference title.
+    function chunky(str, x, y, size, face, side, o = {}) {
+      ctx.save();
+      if (o.alpha != null) ctx.globalAlpha *= o.alpha;
+      ctx.font = `${size}px ${F_DISPLAY}`;
+      if (o.maxWidth) {
+        const w = ctx.measureText(str).width;
+        if (w > o.maxWidth) { size *= o.maxWidth / w; ctx.font = `${size}px ${F_DISPLAY}`; }
+      }
+      ctx.translate(x, y);
+      if (o.rot) ctx.rotate(o.rot);
+      ctx.textAlign = o.align || 'center';
+      ctx.textBaseline = 'alphabetic';
+      ctx.lineJoin = 'round';
+      const d = size * (o.depth ?? 0.05);
+      const dx = -d * 0.9, dy = -d * 0.8;
+      ctx.lineWidth = Math.max(3, size * 0.034);
+      ctx.strokeStyle = C.ink;
+      ctx.fillStyle = side;
+      ctx.strokeText(str, dx, dy);
+      ctx.fillText(str, dx, dy);
+      const steps = Math.ceil(d);
+      for (let i = steps; i > 0; i--) ctx.fillText(str, (dx * i) / steps, (dy * i) / steps);
+      ctx.fillStyle = face;
+      ctx.fillText(str, 0, 0);
+      ctx.strokeText(str, 0, 0);
+      ctx.restore();
+    }
+
+    function star(x, y, r, rot, fill = C.star) {
+      const pts = [];
+      for (let i = 0; i < 8; i++) {
+        const a = rot + (i * Math.PI) / 4;
+        const rr = i % 2 ? r * 0.32 : r;
+        pts.push({ x: x + Math.cos(a) * rr, y: y + Math.sin(a) * rr });
+      }
+      ctx.save();
+      ctx.beginPath();
+      pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = C.ink; ctx.lineJoin = 'round'; ctx.stroke();
+      ctx.restore();
+    }
+
+    // ------------------------------------------------------------------
+    // Timeline (seconds)
+    // ------------------------------------------------------------------
+    const STEPS = {
+      ice:      { s: 4.6,  e: 7.6 },
+      gin:      { s: 7.6,  e: 12.4 },
+      campari:  { s: 12.4, e: 17.2 },
+      vermouth: { s: 17.2, e: 22.0 },
+      stir:     { s: 22.0, e: 25.2 },
+      garnish:  { s: 25.2, e: 27.8 }
+    };
+    const OUTRO = 27.8;
+
+    // ------------------------------------------------------------------
+    // Glass geometry
+    // ------------------------------------------------------------------
+    const G = { cx: 960, rimY: 392, botY: 812, rimHW: 200, botHW: 176, rimRY: 16, wall: 11, innerBotY: 772 };
+    const hw = y => lerp(G.rimHW, G.botHW, (y - G.rimY) / (G.botY - G.rimY));
+    const ihw = y => hw(y) - G.wall;
+    const wallL = y => G.cx - hw(y);
+    const wallR = y => G.cx + hw(y);
+    const LEVELS = [G.innerBotY, 684, 592, 500]; // empty, 1 part, 2 parts, 3 parts
+
+    const GEO = (() => {
+      const cx = G.cx, ib = G.innerBotY;
+      const silhouette = [
+        ...seg({ x: cx - G.rimHW, y: G.rimY }, { x: cx - G.botHW, y: G.botY - 12 }, 26),
+        ...ell(cx, G.botY - 12, G.botHW, 12, Math.PI, 0, 22).slice(0, -1),
+        ...seg({ x: cx + G.botHW, y: G.botY - 12 }, { x: cx + G.rimHW, y: G.rimY }, 26),
+        ...ell(cx, G.rimY, G.rimHW, G.rimRY, 0, Math.PI, 24).slice(0, -1)
+      ];
+      const base = [
+        ...ell(cx, ib, ihw(ib), 10, Math.PI, 0, 20),
+        ...ell(cx, G.botY - 12, G.botHW, 12, 0, Math.PI, 22)
+      ];
+      const inner = new Path2D();
+      inner.moveTo(cx - ihw(G.rimY), G.rimY - 60);
+      inner.lineTo(cx + ihw(G.rimY), G.rimY - 60);
+      inner.lineTo(cx + ihw(ib), ib);
+      ell(cx, ib, ihw(ib), 10, 0, Math.PI, 20).forEach(p => inner.lineTo(p.x, p.y));
+      inner.closePath();
+      return {
+        silhouette,
+        base,
+        inner,
+        rim: ellClosed(cx, G.rimY, G.rimHW, G.rimRY, 48),
+        rimBack: ell(cx, G.rimY, G.rimHW, G.rimRY, Math.PI, Math.PI * 2, 24),
+        rimFront: ell(cx, G.rimY, G.rimHW, G.rimRY, 0, Math.PI, 24),
+        innerL: seg({ x: cx - ihw(G.rimY + 8), y: G.rimY + 8 }, { x: cx - ihw(ib), y: ib }, 26).concat([{ x: cx - ihw(ib), y: ib }]),
+        innerR: seg({ x: cx + ihw(G.rimY + 8), y: G.rimY + 8 }, { x: cx + ihw(ib), y: ib }, 26).concat([{ x: cx + ihw(ib), y: ib }]),
+        baseTop: ell(cx, ib, ihw(ib), 10, Math.PI, 0, 20)
+      };
+    })();
+
+    function drawGlassBack(fillA, reveal) {
+      if (fillA > 0) {
+        ctx.save();
+        ctx.globalAlpha = fillA;
+        shape(GEO.silhouette, { fill: rgba(C.glass, 0.8), stroke: false, seed: 1, amp: 1.2 });
+        shape(GEO.base, { fill: rgba(C.glassBase, 0.95), stroke: false, seed: 2, amp: 1 });
+        shape(GEO.rim, { fill: C.rimFill, stroke: false, seed: 3, amp: 1 });
+        ctx.restore();
+      }
+      shape(GEO.rimBack, { closed: false, lw: 4, seed: 4, reveal, double: true });
+    }
+
+    function drawGlassFront(fillA, reveal) {
+      shape(GEO.silhouette, { lw: 4.5, seed: 5, reveal, double: reveal >= 1 });
+      shape(GEO.rimFront, { closed: false, lw: 4.5, seed: 6, reveal });
+      if (fillA <= 0) return;
+      ctx.save();
+      ctx.globalAlpha = fillA;
+      shape(GEO.innerL, { closed: false, lw: 2.5, seed: 7, alpha: 0.55 });
+      shape(GEO.innerR, { closed: false, lw: 2.5, seed: 8, alpha: 0.55 });
+      shape(GEO.baseTop, { closed: false, lw: 3, seed: 9, alpha: 0.7 });
+      // highlights
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.moveTo(wallL(440) + 28, 440); ctx.lineTo(wallL(640) + 26, 640); ctx.stroke();
+      ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.moveTo(wallL(668) + 26, 668); ctx.lineTo(wallL(700) + 26, 700); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(wallR(470) - 24, 470); ctx.lineTo(wallR(560) - 23, 560); ctx.stroke();
+      ctx.restore();
+    }
+
+    // ------------------------------------------------------------------
+    // Liquid
+    // ------------------------------------------------------------------
+    function pourProgress(id, t) {
+      const s = STEPS[id].s;
+      return ease.inOut(prog(t, s + 1.05, s + 3.7));
+    }
+    function levelAt(t) {
+      return LEVELS[0]
+        + (LEVELS[1] - LEVELS[0]) * pourProgress('gin', t)
+        + (LEVELS[2] - LEVELS[1]) * pourProgress('campari', t)
+        + (LEVELS[3] - LEVELS[2]) * pourProgress('vermouth', t);
+    }
+    function liquidAt(t) {
+      const pc = pourProgress('campari', t), pv = pourProgress('vermouth', t);
+      let col = mix(C.gin, C.campari, Math.pow(pc, 0.55));
+      col = mix(col, C.negroni, pv);
+      return { col, a: lerp(0.72, 0.95, clamp(pc * 1.6)) };
+    }
+    function stirState(t) {
+      const u = t - STEPS.stir.s;
+      const k = prog(u, 0.45, 0.75) * (1 - prog(u, 2.45, 2.75));
+      return { k, ph: Math.PI * 2 * 1.35 * u, u };
+    }
+
+    function drawLiquid(t, level, liq) {
+      if (level >= G.innerBotY - 0.5) return;
+      const cx = G.cx;
+      ctx.save();
+      ctx.clip(GEO.inner);
+      ctx.globalAlpha = liq.a;
+      ctx.fillStyle = liq.col;
+      ctx.fillRect(cx - 260, level, 520, G.innerBotY + 20 - level);
+      const g = ctx.createLinearGradient(cx - 200, 0, cx + 200, 0);
+      g.addColorStop(0, 'rgba(255,255,255,0.14)');
+      g.addColorStop(0.45, 'rgba(255,255,255,0)');
+      g.addColorStop(1, 'rgba(0,0,0,0.12)');
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - 260, level, 520, G.innerBotY + 20 - level);
+      ctx.globalAlpha = 1;
+      const rx = ihw(level);
+      const surf = ellClosed(cx, level, rx, 11, 40);
+      shape(surf, { fill: rgba(shade(liq.col, -0.14), liq.a), stroke: false, seed: 50, amp: 0.8 });
+
+      // ripples where the stream lands
+      for (const id of ['gin', 'campari', 'vermouth']) {
+        const s = STEPS[id].s;
+        const on = prog(t, s + 1.1, s + 1.3) * (1 - prog(t, s + 3.6, s + 3.95));
+        if (on <= 0) continue;
+        for (let k = 0; k < 3; k++) {
+          const ph = ((t * 2.6 + k / 3) % 1);
+          ctx.strokeStyle = `rgba(255,255,255,${0.55 * (1 - ph) * on})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.ellipse(cx - 20, level, 10 + ph * 70, (10 + ph * 70) * 0.18, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      // swirl while stirring
+      const st = stirState(t);
+      if (st.k > 0) {
+        ctx.strokeStyle = rgba(shade(liq.col, 0.35), 0.75 * st.k);
+        ctx.lineWidth = 3.5;
+        ctx.lineCap = 'round';
+        for (const [f, off] of [[0.68, 0], [0.4, 2.4]]) {
+          ctx.beginPath();
+          ctx.ellipse(cx, level, rx * f, 11 * f, 0, st.ph + off, st.ph + off + 1.9);
+          ctx.stroke();
+        }
+      }
+      shape(surf, { stroke: C.ink, lw: 3, seed: 51, amp: 0.8, alpha: 0.85 });
+      ctx.restore();
+    }
+
+    // ------------------------------------------------------------------
+    // Ice
+    // ------------------------------------------------------------------
+    const CUBES = [
+      { x: -78, rest: 700, off: 150, rot: -0.18, s: 116, drop: 4.95, seed: 110, clink: { x: -300, y: 520, r: -0.15 } },
+      { x: 74,  rest: 703, off: 72,  rot: 0.14,  s: 112, drop: 5.45, seed: 220, clink: { x: 262, y: 300, r: 0.12 } },
+      { x: -6,  rest: 612, off: -22, rot: 0.32,  s: 118, drop: 5.95, seed: 330, clink: { x: -290, y: 430, r: -0.08 } }
+    ];
+    const landTime = c => c.drop + 0.42;
+
+    function cubePose(c, i, t, level) {
+      const p = prog(t, c.drop, landTime(c));
+      if (p <= 0) return null;
+      let x = G.cx + c.x + (1 - p) * (i - 1) * 60;
+      let y = lerp(-170, c.rest, p * p);
+      let rot = c.rot + (1 - p) * (i % 2 ? -1.8 : 1.8);
+      const b = prog(t, landTime(c), landTime(c) + 0.3);
+      y -= Math.sin(b * Math.PI) * 16 * (1 - b);
+      const fy = level + c.off;
+      if (p >= 1 && fy < y) {
+        const f = clamp((y - fy) / 24);
+        y = fy + Math.sin(t * 2.4 + i * 1.7) * 3 * f;
+        rot += Math.sin(t * 1.7 + i) * 0.03 * f;
+      }
+      const st = stirState(t);
+      if (st.k > 0) {
+        x += st.k * 16 * Math.cos(st.ph + i * 2.1);
+        y += st.k * 5 * Math.sin(st.ph + i * 2.1);
+        rot += st.k * 0.08 * Math.sin(st.ph + i);
+      }
+      return { x, y, rot };
+    }
+
+    function cubeBody(c, front, top, side, lw) {
+      const h = c.s / 2, d = c.s * 0.24, ox = -d / 2, oy = d / 2;
+      const TL = { x: ox - h, y: oy - h }, TR = { x: ox + h, y: oy - h };
+      const BR = { x: ox + h, y: oy + h }, BL = { x: ox - h, y: oy + h };
+      const b = p => ({ x: p.x + d, y: p.y - d });
+      const sil = poly([BL, BR, b(BR), b(TR), b(TL), TL], true, 14);
+      shape(sil, { fill: front, stroke: false, seed: c.seed, amp: 1.1 });
+      shape(poly([TL, TR, b(TR), b(TL)], true, 14), { fill: top, stroke: false, seed: c.seed + 1, amp: 0.8 });
+      shape(poly([TR, BR, b(BR), b(TR)], true, 14), { fill: side, stroke: false, seed: c.seed + 2, amp: 0.8 });
+      shape(sil, { lw, seed: c.seed, amp: 1.1 });
+      shape(poly([TL, TR, BR], false, 14), { closed: false, lw: lw * 0.7, seed: c.seed + 4, amp: 1 });
+      shape(poly([TR, b(TR)], false, 14), { closed: false, lw: lw * 0.7, seed: c.seed + 5, amp: 1 });
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(ox - h + 16, oy - h + 22); ctx.lineTo(ox - h + 16, oy - h + 48); ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawCubes(t, level, liq) {
+      CUBES.forEach((c, i) => {
+        const pose = cubePose(c, i, t, level);
+        if (!pose) return;
+        ctx.save();
+        ctx.translate(pose.x, pose.y);
+        ctx.rotate(pose.rot);
+        cubeBody(c, C.ice, C.iceTop, C.iceSide, 4);
+        ctx.restore();
+        // the part below the surface is seen through the drink
+        if (level < G.innerBotY - 1 && pose.y + c.s > level) {
+          const k = 0.62 * liq.a;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, level, W, H);
+          ctx.clip();
+          ctx.translate(pose.x, pose.y);
+          ctx.rotate(pose.rot);
+          cubeBody(c, mix(C.ice, liq.col, k), mix(C.iceTop, liq.col, k * 0.8), mix(C.iceSide, liq.col, k * 1.1), 3.5);
+          ctx.restore();
+        }
+      });
+    }
+
+    function drawClinks(t) {
+      CUBES.forEach(c => {
+        const p = prog(t, landTime(c), landTime(c) + 0.6);
+        if (p <= 0 || p >= 1) return;
+        const s = ease.back(prog(p, 0, 0.4));
+        ctx.save();
+        ctx.translate(G.cx + c.clink.x, c.clink.y - p * 20);
+        ctx.scale(s, s);
+        text('clink!', 0, 0, { size: 46, font: F_DISPLAY, color: '#9fd0df', stroke: C.ink, lw: 7, rot: c.clink.r, alpha: 1 - prog(p, 0.65, 1) });
+        ctx.restore();
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // Bottles + pour stream
+    // ------------------------------------------------------------------
+    const POURS = {
+      gin:      { stream: '#d5ebf0', b: { lip: 17, neck: 14, neckLen: 95,  shoulder: 70, body: 62, len: 410, glass: '#e4f2f5', ring: '#3f8596', paper: '#ffffff', title: 'GIN', sub: 'london dry', tc: '#3f8596' } },
+      campari:  { stream: '#d3263a', b: { lip: 15, neck: 12, neckLen: 120, shoulder: 70, body: 56, len: 420, glass: '#c8102e', ring: '#7d0c1c', paper: '#f7eddb', title: 'CAMPARI', sub: 'bitter', tc: '#c8102e' } },
+      vermouth: { stream: '#7a2418', b: { lip: 16, neck: 13, neckLen: 100, shoulder: 60, body: 64, len: 405, glass: '#4b1812', ring: '#b8923f', paper: '#f1e4c6', title: 'VERMOUTH', sub: 'rosso · sweet', tc: '#7a2a1c' } }
+    };
+    for (const id in POURS) {
+      const b = POURS[id].b;
+      const right = [{ x: b.lip, y: 0 }, { x: b.lip, y: 14 }, { x: b.neck, y: 20 }, { x: b.neck, y: b.neckLen }];
+      for (let k = 1; k <= 8; k++) {
+        const u = k / 8, p0 = { x: b.neck, y: b.neckLen }, c1 = { x: b.body, y: b.neckLen + 6 }, p1 = { x: b.body, y: b.neckLen + b.shoulder };
+        right.push({ x: (1 - u) ** 2 * p0.x + 2 * (1 - u) * u * c1.x + u * u * p1.x, y: (1 - u) ** 2 * p0.y + 2 * (1 - u) * u * c1.y + u * u * p1.y });
+      }
+      right.push({ x: b.body, y: b.len - 16 }, { x: b.body - 5, y: b.len - 5 }, { x: b.body - 16, y: b.len });
+      const left = right.map(p => ({ x: -p.x, y: p.y })).reverse();
+      b.outline = poly(right.concat(left), true, 18);
+      b.labelPts = roundRectPts(-b.body + 8, 200, 2 * b.body - 16, 170, 10, 18);
+    }
+
+    function bottlePose(id, t) {
+      const u = t - STEPS[id].s;
+      const pin = ease.inOut(prog(u, 0, 1.0)), pout = ease.inOut(prog(u, 3.75, 4.6));
+      if (pin <= 0 || pout >= 1) return null;
+      const P = { x: G.cx + 14, y: 250 }, O = { x: 1720, y: -520 };
+      const k = pin * (1 - pout);
+      const tilt = ease.inOut(prog(u, 0.25, 1.0)) * (1 - ease.inOut(prog(u, 3.65, 4.35)));
+      const pouring = prog(u, 1.0, 1.2) * (1 - prog(u, 3.5, 3.7));
+      return {
+        x: lerp(O.x, P.x, k) + Math.sin(t * 13) * 1.5 * pouring,
+        y: lerp(O.y, P.y, k) + Math.cos(t * 11) * 1.5 * pouring,
+        a: lerp(0.35, -2.0, tilt) + Math.sin(t * 9) * 0.02 * pouring
+      };
+    }
+
+    function drawBottle(id, pose) {
+      const b = POURS[id].b;
+      ctx.save();
+      ctx.translate(pose.x, pose.y);
+      ctx.rotate(pose.a);
+      shape(b.outline, { fill: b.glass, lw: 4.5, seed: 400 + b.len, amp: 1.2, double: true });
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-b.body + 16, b.neckLen + b.shoulder + 10); ctx.lineTo(-b.body + 16, b.len - 40); ctx.stroke();
+      ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(-b.neck + 6, 30); ctx.lineTo(-b.neck + 6, b.neckLen - 10); ctx.stroke();
+      ctx.restore();
+      shape(roundRectPts(-b.lip - 2, 4, 2 * b.lip + 4, 16, 5, 10), { fill: b.ring, lw: 3.5, seed: 460, amp: 0.8 });
+      shape(b.labelPts, { fill: b.paper, lw: 3.5, seed: 470, amp: 1 });
+      ctx.save();
+      ctx.translate(0, 285);
+      ctx.rotate(Math.PI / 2);
+      ctx.font = `34px ${F_DISPLAY}`;
+      const tw = ctx.measureText(b.title).width;
+      const size = tw > 150 ? (34 * 150) / tw : 34;
+      text(b.title, 0, 6, { size, font: F_DISPLAY, color: b.tc });
+      text(b.sub, 0, 34, { size: 24, color: C.ink });
+      ctx.restore();
+      ctx.restore();
+    }
+
+    function drawStream(id, t, level) {
+      const s = STEPS[id].s;
+      const head = prog(t, s + 0.95, s + 1.2), tail = prog(t, s + 3.65, s + 3.9);
+      if (head <= 0 || tail >= 1) return;
+      const pose = bottlePose(id, t);
+      if (!pose) return;
+      const M = { x: pose.x, y: pose.y };
+      const endX = G.cx - 20;
+      const path = poly([M, { x: M.x - 16, y: M.y + 10 }, { x: M.x - 26, y: M.y + 32 }, { x: endX, y: M.y + 64 }, { x: endX, y: level }], false, 6);
+      const n = path.length;
+      const i0 = Math.floor(ease.in(tail) * (n - 1)), i1 = Math.ceil(head * (n - 1));
+      const pts = path.slice(i0, i1 + 1).map((p, k) => ({ x: p.x + (k + i0 > 10 ? Math.sin((k + i0) * 0.45 + t * 30) * 1.4 : 0), y: p.y }));
+      if (pts.length < 2) return;
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      pathFrom(pts, false);
+      ctx.strokeStyle = C.ink; ctx.lineWidth = 16; ctx.stroke();
+      ctx.strokeStyle = POURS[id].stream; ctx.lineWidth = 10; ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 3;
+      pathFrom(pts.map(p => ({ x: p.x - 2, y: p.y })), false); ctx.stroke();
+      ctx.restore();
+
+      // splash droplets while the stream is hitting the surface
+      const on = prog(t, s + 1.15, s + 1.3) * (1 - prog(t, s + 3.6, s + 3.8));
+      if (on > 0) {
+        for (let k = 0; k < 7; k++) {
+          const ph = (t * 2.2 + k / 7) % 1;
+          const dir = hash(k, 21);
+          const x = endX + dir * 55 * ph;
+          const y = level - Math.sin(ph * Math.PI) * (26 + 18 * Math.abs(hash(k, 22)));
+          const r = (5 - ph * 3.5) * on;
+          if (r <= 0.5) continue;
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fillStyle = POURS[id].stream; ctx.fill();
+          ctx.lineWidth = 1.8; ctx.strokeStyle = C.ink; ctx.stroke();
+        }
+      }
+    }
+
+    function drawGlugs(t) {
+      for (const id in POURS) {
+        const s = STEPS[id].s;
+        [1.5, 2.45].forEach((d, k) => {
+          const p = prog(t, s + d, s + d + 0.9);
+          if (p <= 0 || p >= 1) return;
+          const a = prog(p, 0, 0.2) * (1 - prog(p, 0.7, 1));
+          text('glug', G.cx - 170 - k * 40, 330 - p * 50 + k * 10, { size: 40, color: C.ink, alpha: a, rot: -0.2 + k * 0.25 });
+        });
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Bar spoon
+    // ------------------------------------------------------------------
+    function drawSpoon(t) {
+      const u = t - STEPS.stir.s;
+      if (u < 0 || u > 3.2) return;
+      const st = stirState(t);
+      const pin = ease.out(prog(u, 0, 0.55)), pout = ease.in(prog(u, 2.65, 3.2));
+      const tipX = G.cx + 40 + st.k * 80 * Math.cos(st.ph);
+      const tipY = lerp(-160, 705, pin) - pout * 950 + st.k * 18 * Math.sin(st.ph);
+      const ang = 0.16 + st.k * 0.07 * Math.cos(st.ph);
+      const L = 640;
+      ctx.save();
+      ctx.translate(tipX, tipY);
+      ctx.rotate(ang);
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = C.ink; ctx.lineWidth = 12;
+      ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(0, -L); ctx.stroke();
+      ctx.strokeStyle = C.steel; ctx.lineWidth = 6.5;
+      ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(0, -L); ctx.stroke();
+      ctx.strokeStyle = rgba(C.ink, 0.6); ctx.lineWidth = 2;
+      for (let y = -90; y > -L + 70; y -= 15) {
+        ctx.beginPath(); ctx.moveTo(-3, y); ctx.lineTo(3, y - 7); ctx.stroke();
+      }
+      shape(ellClosed(0, 0, 17, 27, 20), { fill: C.steel, lw: 4, seed: 600, amp: 0.8 });
+      shape(ellClosed(0, -L - 6, 13, 16, 16), { fill: C.steel, lw: 4, seed: 601, amp: 0.8 });
+      ctx.restore();
+    }
+
+    // ------------------------------------------------------------------
+    // Orange peel garnish
+    // ------------------------------------------------------------------
+    function drawGarnish(t) {
+      const u = t - STEPS.garnish.s;
+      if (u < 0) return;
+      const peelIn = ease.out(prog(u, 0, 0.4));
+      const squeeze = prog(u, 0.4, 1.0);
+      const toRim = ease.inOut(prog(u, 1.0, 1.35));
+      const coil = ease.out(prog(u, 1.1, 1.9));
+      const P = { x: lerp(lerp(1560, G.cx + 20, peelIn), G.cx + 150, toRim), y: lerp(lerp(-90, 285, peelIn), 360, toRim) };
+
+      // mist of expressed oils
+      for (let k = 0; k < 18; k++) {
+        const birth = 0.45 + (k / 18) * 0.45;
+        const age = (u - birth) / 0.55;
+        if (age <= 0 || age >= 1) continue;
+        const a = Math.PI / 2 + hash(k, 31) * 0.55;
+        const d = 24 + age * (130 + 30 * hash(k, 32));
+        ctx.beginPath();
+        ctx.arc(G.cx + 20 + Math.cos(a) * d, 285 + Math.sin(a) * d, 2 + 3.5 * (1 - age), 0, Math.PI * 2);
+        ctx.fillStyle = rgba(C.orange, 0.85 * (1 - age));
+        ctx.fill();
+      }
+      if (squeeze > 0 && squeeze < 1) {
+        text('spritz!', G.cx + 170, 250, { size: 40, font: F_DISPLAY, color: C.orange, stroke: C.ink, lw: 7, rot: 0.12, alpha: Math.sin(squeeze * Math.PI) });
+      }
+
+      // flat peel before it's twisted
+      if (toRim < 1) {
+        const sq = 1 - 0.38 * Math.sin(squeeze * Math.PI);
+        ctx.save();
+        ctx.translate(P.x, P.y);
+        ctx.rotate(-0.25 + toRim * 0.4);
+        ctx.scale(1 - toRim * 0.7, sq * (1 - toRim * 0.7));
+        const strip = roundRectPts(-80, -24, 160, 48, 24, 16);
+        shape(strip, { fill: C.orange, lw: 4.5, seed: 700 });
+        shape(roundRectPts(-66, -12, 132, 24, 12, 16), { fill: C.pith, stroke: false, seed: 701, amp: 0.8 });
+        ctx.fillStyle = rgba(C.orangeDark, 0.6);
+        for (let k = 0; k < 9; k++) { ctx.beginPath(); ctx.arc(-60 + k * 15, 14 * hash(k, 33), 2.2, 0, Math.PI * 2); ctx.fill(); }
+        ctx.restore();
+      }
+
+      if (coil > 0) drawTwist(coil);
+
+      // sparkles around the finished twist
+      [[G.cx + 90, 318], [G.cx + 290, 350], [G.cx + 250, 290]].forEach(([x, y], k) => {
+        const p = prog(u, 1.75 + k * 0.12, 2.45 + k * 0.12);
+        if (p <= 0 || p >= 1) return;
+        star(x, y, 20 * Math.sin(p * Math.PI), p * 2);
+      });
+    }
+
+    function drawTwist(p) {
+      const U = Math.PI * 2 * 2.6;
+      const x0 = G.cx + 78, y0 = 350, adv = 7.2, r = 31;
+      const pt = u => ({ x: x0 + adv * u + r * 0.85 * Math.sin(u), y: y0 - r * Math.cos(u) + u * 1.6 });
+      const uMax = U * p;
+      const halves = [];
+      for (let a = 0; a < uMax; a += Math.PI) {
+        const b = Math.min(uMax, a + Math.PI);
+        const pts = [];
+        for (let u = a; u <= b + 1e-6; u += 0.12) pts.push(pt(Math.min(u, b)));
+        pts.push(pt(b));
+        // sin(u) > 0 on this half => ribbon faces the viewer
+        halves.push({ pts, front: Math.floor(a / Math.PI) % 2 === 0 });
+      }
+      ctx.save();
+      ctx.lineCap = 'butt';
+      ctx.lineJoin = 'round';
+      for (const pass of [false, true]) {
+        for (const h of halves) {
+          if (h.front !== pass || h.pts.length < 2) continue;
+          const j = jitter(h.pts, 800 + halves.indexOf(h), 0.8);
+          pathFrom(j, false);
+          ctx.strokeStyle = C.ink; ctx.lineWidth = pass ? 24 : 20; ctx.stroke();
+          ctx.strokeStyle = pass ? C.orange : C.orangeDark; ctx.lineWidth = pass ? 17 : 13; ctx.stroke();
+          if (pass) { ctx.strokeStyle = rgba(C.pith, 0.8); ctx.lineWidth = 3; ctx.stroke(); }
+        }
+      }
+      ctx.restore();
+    }
+
+    // ------------------------------------------------------------------
+    // Title, recipe card, step callouts
+    // ------------------------------------------------------------------
+    const TITLE = 'NEGRONI', TITLE_SIZE = 190;
+    let titleXs = null;
+    function layoutTitle() {
+      ctx.save();
+      ctx.font = `${TITLE_SIZE}px ${F_DISPLAY}`;
+      const gap = 10;
+      const ws = [...TITLE].map(ch => ctx.measureText(ch).width);
+      let x = -(ws.reduce((a, b) => a + b, 0) + gap * (ws.length - 1)) / 2;
+      titleXs = ws.map(w => { const c = x + w / 2; x += w + gap; return c; });
+      ctx.restore();
+    }
+
+    function drawTitle(t) {
+      if (!titleXs) layoutTitle();
+      const k1 = ease.inOut(prog(t, 3.6, 4.5)), k2 = ease.inOut(prog(t, OUTRO + 0.1, OUTRO + 1.0));
+      const A = { x: 960, y: 300, s: 1 }, B = { x: 355, y: 170, s: 0.46 }, Z = { x: 960, y: 238, s: 0.9 };
+      const x = lerp(lerp(A.x, B.x, k1), Z.x, k2);
+      const y = lerp(lerp(A.y, B.y, k1), Z.y, k2);
+      const s = lerp(lerp(A.s, B.s, k1), Z.s, k2);
+      [...TITLE].forEach((ch, i) => {
+        const p = prog(t, 0.15 + i * 0.11, 0.6 + i * 0.11);
+        if (p <= 0) return;
+        const pop = ease.back(p);
+        const hop = Math.sin(prog(t, OUTRO + 1.0 + i * 0.06, OUTRO + 1.35 + i * 0.06) * Math.PI) * 26;
+        ctx.save();
+        ctx.translate(x + titleXs[i] * s, y - 70 * s - hop * s);
+        ctx.scale(s * pop, s * pop);
+        chunky(ch, 0, 70 + hash(i, 9) * 6, TITLE_SIZE, C.pink, C.pinkDark, { rot: hash(i, 7) * 0.07 + hash(BOIL, i, 3) * 0.012, depth: 0.055 });
+        ctx.restore();
+      });
+    }
+
+    const ITEMS = [
+      { step: 'ice',      name: 'Ice',            amt: 'fill the glass',  color: '#bfdde8' },
+      { step: 'gin',      name: 'Gin',            amt: '1 oz · 30 ml',    color: '#8fc3d1' },
+      { step: 'campari',  name: 'Campari',        amt: '1 oz · 30 ml',    color: C.campari },
+      { step: 'vermouth', name: 'Sweet vermouth', amt: '1 oz · 30 ml',    color: '#7a2418' },
+      { step: 'stir',     name: 'Stir',           amt: '20 seconds',      color: C.steel },
+      { step: 'garnish',  name: 'Orange peel',    amt: 'to garnish',      color: C.orange }
+    ];
+    const CARD = { x: 1330, y: 190, w: 470, h: 720 };
+
+    function drawCard(t) {
+      const kin = prog(t, 3.8, 4.6), kout = ease.in(prog(t, OUTRO, OUTRO + 0.7));
+      if (kin <= 0 || kout >= 1) return;
+      const { w, h } = CARD;
+      ctx.save();
+      ctx.translate(CARD.x + w / 2 + (1 - ease.out(kin)) * 720 + kout * 720, CARD.y + h / 2);
+      ctx.rotate(0.018 + (1 - ease.out(kin)) * 0.12 + kout * 0.1);
+      ctx.translate(-w / 2, -h / 2);
+      ctx.fillStyle = 'rgba(80,40,20,0.08)';
+      pathFrom(roundRectPts(12, 14, w, h, 18), true); ctx.fill();
+      shape(roundRectPts(0, 0, w, h, 18), { fill: '#fffdf8', lw: 4, seed: 301, amp: 1.2, double: true });
+      ctx.save(); ctx.translate(w / 2, -4); ctx.rotate(-0.04); ctx.fillStyle = 'rgba(226,122,120,0.38)'; ctx.fillRect(-72, -18, 144, 36); ctx.restore();
+      chunky('THE RECIPE', w / 2, 92, 58, C.pink, C.pinkDark, { depth: 0.06 });
+      text('rocks glass · built over ice', w / 2, 136, { size: 30, color: C.muted });
+      shape(seg({ x: 30, y: 160 }, { x: w - 30, y: 160 }, 30).concat([{ x: w - 30, y: 160 }]), { closed: false, lw: 2.5, seed: 302, alpha: 0.5 });
+
+      ITEMS.forEach((it, i) => {
+        const st = STEPS[it.step];
+        const y = 176 + i * 80;
+        const hi = ease.out(prog(t, st.s + 0.1, st.s + 0.5)) * (1 - prog(t, st.e - 0.1, st.e + 0.3));
+        if (hi > 0) {
+          shape(roundRectPts(64, y + 6, (w - 88) * hi, 68, 12, 20), { fill: rgba(it.color, 0.3), stroke: false, seed: 310 + i, amp: 1.5 });
+        }
+        const done = prog(t, st.e - 0.45, st.e - 0.05);
+        shape(ellClosed(40, y + 36, 14, 14, 14), { fill: done > 0 ? '#fffdf8' : it.color, lw: 3, seed: 320 + i, amp: 0.7 });
+        if (done > 0) {
+          shape([{ x: 30, y: y + 34 }, { x: 40, y: y + 46 }, { x: 60, y: y + 16 }], { closed: false, lw: 6, seed: 330 + i, amp: 0.8, reveal: done, stroke: '#2f8f5b' });
+        }
+        text(it.name, 76, y + 36, { size: 38, align: 'left', color: C.ink });
+        text(it.amt, 78, y + 66, { size: 28, align: 'left', color: C.muted });
+      });
+      text('makes 1 · about 90 ml', w / 2, h - 30, { size: 30, color: C.muted });
+      ctx.restore();
+    }
+
+    function iceCount(t) { return CUBES.filter(c => t >= landTime(c)).length; }
+    function mlOf(id, t) { return Math.round(30 * pourProgress(id, t)); }
+
+    const CALLOUTS = {
+      ice:      t => ({ n: 1, name: 'ICE', color: '#9fd0df', desc: 'fill the glass', big: String(iceCount(t)), sub: 'big cubes', bar: iceCount(t) / 3 }),
+      gin:      t => ({ n: 2, name: 'GIN', color: '#7fb7c6', desc: 'London dry', big: '1 oz', sub: `${mlOf('gin', t)} ml`, bar: pourProgress('gin', t) }),
+      campari:  t => ({ n: 3, name: 'CAMPARI', color: C.campari, desc: 'the bitter red one', big: '1 oz', sub: `${mlOf('campari', t)} ml`, bar: pourProgress('campari', t) }),
+      vermouth: t => ({ n: 4, name: 'VERMOUTH', color: '#8e3222', desc: 'sweet (rosso)', big: '1 oz', sub: `${mlOf('vermouth', t)} ml`, bar: pourProgress('vermouth', t) }),
+      stir:     t => { const s = Math.round(20 * prog(t - STEPS.stir.s, 0.5, 2.6)); return { n: 5, name: 'STIR', color: '#aab6be', desc: 'with a bar spoon', big: `${s} s`, sub: 'until ice-cold', bar: s / 20 }; },
+      garnish:  t => ({ n: 6, name: 'ORANGE PEEL', color: C.orange, desc: 'express the oils', big: '1 twist', sub: 'rest it on the rim', bar: prog(t - STEPS.garnish.s, 0.4, 1.9) })
+    };
+
+    function drawCallout(t) {
+      for (const id in STEPS) {
+        const st = STEPS[id];
+        const u = t - st.s, dur = st.e - st.s;
+        if (u < 0 || u > dur) continue;
+        const info = CALLOUTS[id](t);
+        const kin = ease.back(prog(u, 0, 0.45)), kout = ease.in(prog(u, dur - 0.35, dur));
+        ctx.save();
+        ctx.globalAlpha = prog(u, 0, 0.25) * (1 - kout);
+        ctx.translate((1 - kin) * -70 - kout * 50, 0);
+        text(`STEP ${info.n} OF 6`, 132, 330, { size: 34, align: 'left', color: C.muted });
+        chunky(info.name, 136, 424, 86, info.color, shade(info.color, -0.28), { align: 'left', maxWidth: 440, depth: 0.05 });
+        text(info.desc, 134, 476, { size: 40, align: 'left' });
+        const pulse = 1 + 0.06 * Math.sin(prog(u, 0.9, 1.3) * Math.PI);
+        ctx.save();
+        ctx.translate(130, 640);
+        ctx.scale(pulse, pulse);
+        text(info.big, 0, 0, { size: 150, font: F_DISPLAY, align: 'left', color: C.ink });
+        ctx.restore();
+        text(info.sub, 134, 704, { size: 50, align: 'left', color: shade(info.color, -0.35) });
+        const bw = 420;
+        if (info.bar > 0.005) shape(roundRectPts(134, 734, Math.max(28, bw * info.bar), 28, 14, 20), { fill: info.color, stroke: false, seed: 340, amp: 0.8 });
+        shape(roundRectPts(134, 734, bw, 28, 14, 20), { lw: 3.5, seed: 341, amp: 1 });
+        ctx.restore();
+      }
+    }
+
+    function drawArrow(t) {
+      const targets = { ice: 660, gin: LEVELS[1], campari: LEVELS[2], vermouth: LEVELS[3], stir: 560 };
+      for (const id in targets) {
+        const st = STEPS[id];
+        const u = t - st.s, dur = st.e - st.s;
+        if (u < 0 || u > dur) continue;
+        const r = ease.inOut(prog(u, 0.35, 0.85));
+        if (r <= 0) continue;
+        const y = targets[id];
+        const S = { x: 575, y: 585 }, E = { x: wallL(y) - 20, y };
+        const Q = { x: (S.x + E.x) / 2, y: Math.min(S.y, E.y) - 80 };
+        const pts = [];
+        for (let i = 0; i <= 20; i++) {
+          const k = i / 20;
+          pts.push({ x: (1 - k) ** 2 * S.x + 2 * (1 - k) * k * Q.x + k * k * E.x, y: (1 - k) ** 2 * S.y + 2 * (1 - k) * k * Q.y + k * k * E.y });
+        }
+        ctx.save();
+        ctx.globalAlpha = 1 - prog(u, dur - 0.35, dur);
+        shape(pts, { closed: false, lw: 4, seed: 360, amp: 1.2, reveal: r });
+        if (r > 0.96) {
+          const a = Math.atan2(E.y - pts[18].y, E.x - pts[18].x);
+          const head = s => ({ x: E.x - Math.cos(a + s) * 24, y: E.y - Math.sin(a + s) * 24 });
+          shape([head(0.5), E, head(-0.5)], { closed: false, lw: 4, seed: 361, amp: 0.8 });
+        }
+        ctx.restore();
+      }
+    }
+
+    function drawTicks(t) {
+      ['gin', 'campari', 'vermouth'].forEach((id, i) => {
+        const at = STEPS[id].s + 3.5;
+        const a = prog(t, at, at + 0.3) * (1 - prog(t, OUTRO, OUTRO + 0.5));
+        if (a <= 0) return;
+        const y = LEVELS[i + 1];
+        const x = wallR(y);
+        ctx.save();
+        ctx.globalAlpha = a;
+        shape([{ x: x + 14, y }, { x: x + 48, y }], { closed: false, lw: 4, seed: 380 + i, amp: 0.8, reveal: prog(t, at, at + 0.3) });
+        text(`${i + 1} part${i ? 's' : ''}`, x + 58, y + 9, { size: 30, align: 'left', color: C.ink });
+        ctx.restore();
+      });
+    }
+
+    function drawIntroSubtitle(t) {
+      const a = prog(t, 1.5, 2.0) * (1 - prog(t, 3.5, 3.9));
+      if (a <= 0) return;
+      text('the 1 : 1 : 1 Italian classic', 960, 930, { size: 56, alpha: a });
+    }
+
+    function drawOutro(t) {
+      const p = prog(t, OUTRO + 0.9, OUTRO + 1.4);
+      if (p > 0) {
+        const s = ease.back(p);
+        ctx.save();
+        ctx.translate(960, 930);
+        ctx.scale(s, s);
+        chunky('Salute!', 0, 30, 96, C.pink, C.pinkDark, { depth: 0.06, rot: -0.03 });
+        ctx.restore();
+      }
+      const a = prog(t, OUTRO + 1.2, OUTRO + 1.7);
+      if (a > 0) text('1 oz gin  ·  1 oz Campari  ·  1 oz sweet vermouth  ·  stir  ·  orange twist', 960, 1026, { size: 36, color: C.muted, alpha: a });
+      [[G.cx - 270, 450], [G.cx + 300, 470], [G.cx - 250, 720], [G.cx + 262, 700], [G.cx - 150, 350]].forEach(([x, y], k) => {
+        const q = prog(t, OUTRO + 0.8 + k * 0.12, OUTRO + 1.1 + k * 0.12);
+        if (q <= 0) return;
+        const tw = 0.75 + 0.25 * Math.sin(t * 6 + k * 1.3);
+        star(x, y, 22 * ease.back(q) * tw, t * 0.8 + k, k % 2 ? C.star : '#ffb3a7');
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // Paper background (generated once)
+    // ------------------------------------------------------------------
+    const paper = document.createElement('canvas');
+    paper.width = W; paper.height = H;
+    (() => {
+      const p = paper.getContext('2d');
+      p.fillStyle = C.paper; p.fillRect(0, 0, W, H);
+      for (let i = 0; i < 9000; i++) {
+        const x = ((hash(i, 1) + 1) / 2) * W, y = ((hash(i, 2) + 1) / 2) * H;
+        p.fillStyle = `rgba(110,70,40,${0.02 + 0.035 * ((hash(i, 3) + 1) / 2)})`;
+        p.fillRect(x, y, 1.7, 1.7);
+      }
+      const g = p.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 1.0);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(90,55,30,0.12)');
+      p.fillStyle = g; p.fillRect(0, 0, W, H);
+    })();
+
+    // ------------------------------------------------------------------
+    // Frame
+    // ------------------------------------------------------------------
+    let scale = 1;
+    function render(t) {
+      t = clamp(t, 0, DURATION);
+      BOIL = Math.floor(t * 8);
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.drawImage(paper, 0, 0, W, H);
+
+      const level = levelAt(t);
+      const liq = liquidAt(t);
+      const reveal = ease.inOut(prog(t, 0.7, 2.3));
+      const gA = prog(t, 1.5, 2.3);
+
+      if (gA > 0) {
+        ctx.fillStyle = `rgba(80,45,25,${0.09 * gA})`;
+        ctx.beginPath(); ctx.ellipse(G.cx + 12, G.botY + 2, 240, 20, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      drawTitle(t);
+      drawIntroSubtitle(t);
+      drawCard(t);
+      drawCallout(t);
+      drawArrow(t);
+
+      drawGlassBack(gA, reveal);
+      drawSpoon(t);
+      drawLiquid(t, level, liq);
+      drawCubes(t, level, liq);
+      for (const id in POURS) drawStream(id, t, level);
+      drawGlassFront(gA, reveal);
+      drawTicks(t);
+      drawGarnish(t);
+      for (const id in POURS) { const pose = bottlePose(id, t); if (pose) drawBottle(id, pose); }
+      drawClinks(t);
+      drawGlugs(t);
+      drawOutro(t);
+    }
+
+    // ------------------------------------------------------------------
+    // Player
+    // ------------------------------------------------------------------
+    const playBtn = document.getElementById('play');
+    const scrub = document.getElementById('scrub');
+    const timeEl = document.getElementById('time');
+    const exportBtn = document.getElementById('export');
+    let tNow = 0, playing = false, last = null, exporting = null, wasPlaying = false;
+
+    function resize() {
+      if (CAPTURE || exporting) { canvas.width = W; canvas.height = H; scale = 1; return; }
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.round(rect.width * dpr));
+      canvas.height = Math.max(1, Math.round((rect.width * 9 / 16) * dpr));
+      scale = canvas.width / W;
+    }
+
+    const fmt = s => `0:${String(Math.floor(s)).padStart(2, '0')}`;
+    function syncUI() {
+      scrub.value = tNow.toFixed(2);
+      timeEl.textContent = `${fmt(tNow)} / ${fmt(DURATION)}`;
+      document.getElementById('icon-play').hidden = playing;
+      document.getElementById('icon-pause').hidden = !playing;
+      playBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+    }
+    function setPlaying(p) {
+      if (p && tNow >= DURATION) tNow = 0;
+      playing = p;
+      last = null;
+      syncUI();
+    }
+
+    function frame(ts) {
+      if (playing) {
+        if (last != null) tNow += Math.min(0.1, (ts - last) / 1000);
+        if (tNow >= DURATION) {
+          tNow = DURATION;
+          playing = false;
+          if (exporting) setTimeout(() => exporting && exporting.stop(), 250);
+        }
+      }
+      last = ts;
+      render(tNow);
+      syncUI();
+      requestAnimationFrame(frame);
+    }
+
+    playBtn.addEventListener('click', () => setPlaying(!playing));
+    document.getElementById('screen').addEventListener('click', () => { if (!exporting) setPlaying(!playing); });
+    document.getElementById('restart').addEventListener('click', () => { tNow = 0; setPlaying(true); });
+    scrub.addEventListener('pointerdown', () => { wasPlaying = playing; playing = false; });
+    scrub.addEventListener('input', () => { tNow = parseFloat(scrub.value); render(tNow); });
+    scrub.addEventListener('change', () => { if (wasPlaying) setPlaying(true); wasPlaying = false; });
+    window.addEventListener('keydown', e => {
+      if (e.target === scrub && e.key !== ' ') return;
+      if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
+      else if (e.key === 'ArrowRight') tNow = Math.min(DURATION, tNow + 1);
+      else if (e.key === 'ArrowLeft') tNow = Math.max(0, tNow - 1);
+      else if (e.key === 'Home') tNow = 0;
+    });
+    window.addEventListener('resize', resize);
+
+    // Real-time export via MediaRecorder (MP4 where supported, otherwise WebM).
+    exportBtn.addEventListener('click', () => {
+      if (exporting) return;
+      if (!canvas.captureStream || !window.MediaRecorder) { alert('Video export is not supported in this browser.'); return; }
+      const types = ['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      const mime = types.find(m => MediaRecorder.isTypeSupported(m));
+      if (!mime) { alert('No supported video format found.'); return; }
+      const chunks = [];
+      const rec = new MediaRecorder(canvas.captureStream(60), { mimeType: mime, videoBitsPerSecond: 16e6 });
+      rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+      rec.onstop = () => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob(chunks, { type: mime }));
+        a.download = `negroni-recipe.${mime.startsWith('video/mp4') ? 'mp4' : 'webm'}`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        exporting = null;
+        exportBtn.classList.remove('recording');
+        exportBtn.querySelector('.export-label').textContent = 'Export video';
+        resize();
+      };
+      exporting = rec;
+      resize();
+      exportBtn.classList.add('recording');
+      exportBtn.querySelector('.export-label').textContent = 'Recording…';
+      tNow = 0;
+      rec.start(250);
+      setPlaying(true);
+    });
+
+    // Hooks for frame-accurate offline rendering.
+    window.renderAt = t => render(t);
+
+    const fontsReady = Promise.race([
+      Promise.all([document.fonts.load(`100px "Luckiest Guy"`), document.fonts.load(`40px "Patrick Hand"`)]),
+      new Promise(r => setTimeout(r, 4000))
+    ]).then(() => { layoutTitle(); });
+    window.animationReady = fontsReady;
+
+    resize();
+    render(0);
+    fontsReady.then(() => {
+      resize();
+      if (!CAPTURE) setPlaying(true);
+      requestAnimationFrame(frame);
+    });
+  })();
+  </script>
+</body>
+</html>
