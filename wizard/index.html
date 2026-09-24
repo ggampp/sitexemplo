@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel Wizard</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0820; }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<canvas id="screen" aria-label="Animated pixel art wizard charging and casting a spell"></canvas>
+<script>
+'use strict';
+(() => {
+  // ==================================================================
+  // Palette: every pixel on screen is one of these indices.
+  // ==================================================================
+  const HEX = [
+    '#0a0820', // 0  SKY0 (also the letterbox colour)
+    '#110e2e', // 1  SKY1
+    '#1a1542', // 2  SKY2
+    '#251d58', // 3  SKY3
+    '#5a5494', // 4  STAR_DIM
+    '#fffbef', // 5  WHITE
+    '#efe3b8', // 6  MOON
+    '#b9a97e', // 7  MOON_SHADE
+    '#1c1a2e', // 8  STONE_DARK
+    '#2e2b48', // 9  STONE
+    '#4a4570', // 10 STONE_LIGHT
+    '#0d0716', // 11 INK (outline)
+    '#5a1428', // 12 ROBE_DARK
+    '#9a2a3c', // 13 ROBE_MID
+    '#d4574c', // 14 ROBE_LIGHT
+    '#f0b23c', // 15 GOLD
+    '#a8641e', // 16 GOLD_DARK
+    '#f1b07e', // 17 SKIN
+    '#e9e6f2', // 18 BEARD
+    '#a9a3c6', // 19 BEARD_SHADE
+    '#7a4a26', // 20 WOOD
+    '#43240f', // 21 WOOD_DARK
+    '#b4fff4', // 22 MAGIC_LIGHT
+    '#3fe3ff', // 23 MAGIC
+    '#2f7ce0', // 24 MAGIC_BLUE
+    '#2e2a8c', // 25 MAGIC_DARK
+    '#ff6fd8'  // 26 MAGIC_PINK
+  ];
+  const SKY0 = 0, SKY1 = 1, SKY2 = 2, SKY3 = 3, STAR_DIM = 4, WHITE = 5, MOON = 6, MOON_SHADE = 7;
+  const STONE_DARK = 8, STONE = 9, STONE_LIGHT = 10, INK = 11;
+  const ROBE_DARK = 12, ROBE_MID = 13, ROBE_LIGHT = 14, GOLD = 15, GOLD_DARK = 16;
+  const SKIN = 17, BEARD = 18, BEARD_SHADE = 19, WOOD = 20, WOOD_DARK = 21;
+  const MAGIC_LIGHT = 22, MAGIC = 23, MAGIC_BLUE = 24, MAGIC_DARK = 25, MAGIC_PINK = 26;
+  const NPAL = HEX.length;
+
+  const PAL32 = new Uint32Array(NPAL);
+  for (let i = 0; i < NPAL; i++) {
+    const n = parseInt(HEX[i].slice(1), 16);
+    PAL32[i] = (0xff << 24) | ((n & 0xff) << 16) | (n & 0xff00) | ((n >> 16) & 0xff); // ABGR (little-endian RGBA)
+  }
+  const IS_MAGIC = new Uint8Array(NPAL);
+  IS_MAGIC[MAGIC_LIGHT] = IS_MAGIC[MAGIC] = IS_MAGIC[MAGIC_BLUE] = IS_MAGIC[MAGIC_DARK] = IS_MAGIC[MAGIC_PINK] = IS_MAGIC[WHITE] = 1;
+
+  // Rim-light lookups: LIT1 = one step brighter in its own ramp, LIT2 = full magic light.
+  const LIT1 = new Uint8Array(NPAL), LIT2 = new Uint8Array(NPAL);
+  for (let i = 0; i < NPAL; i++) { LIT1[i] = i; LIT2[i] = MAGIC_LIGHT; }
+  LIT1[ROBE_DARK] = ROBE_MID; LIT1[ROBE_MID] = ROBE_LIGHT; LIT1[ROBE_LIGHT] = SKIN;
+  LIT1[GOLD_DARK] = GOLD; LIT1[GOLD] = WHITE; LIT1[SKIN] = BEARD; LIT1[BEARD_SHADE] = BEARD; LIT1[BEARD] = WHITE;
+  LIT1[INK] = MAGIC_DARK;
+  LIT2[INK] = MAGIC_BLUE;
+  // The staff sits right next to the gem; lighting it turns it into a stripe, so it stays unlit.
+  LIT1[WOOD] = LIT2[WOOD] = WOOD; LIT1[WOOD_DARK] = LIT2[WOOD_DARK] = WOOD_DARK;
+
+  // Particle colour ramps (white -> magic -> dark), 5 steps each.
+  const RAMPS = new Uint8Array([
+    WHITE, MAGIC_LIGHT, MAGIC, MAGIC_BLUE, MAGIC_DARK,   // 0 cyan
+    WHITE, MAGIC_PINK, MAGIC_PINK, MAGIC_DARK, SKY3,     // 1 pink
+    WHITE, GOLD, GOLD, GOLD_DARK, ROBE_DARK              // 2 embers
+  ]);
+
+  // ==================================================================
+  // Buffers (all preallocated)
+  // ==================================================================
+  const W = 128, H = 96, FLOOR_Y = 80;
+  const fb = new Uint8Array(W * H);
+  const bg = new Uint8Array(W * H);
+
+  const off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(W, H);
+  const img32 = new Uint32Array(img.data.buffer);
+
+  const screen = document.getElementById('screen');
+  const sctx = screen.getContext('2d');
+
+  // Wizard sprite layer (palette indices, 0 = transparent)
+  const SW = 64, SH = 64, OX = 24, OY = 56;
+  const spr = new Uint8Array(SW * SH);
+  const sprO = new Uint8Array(SW * SH);
+  const WIZX = 38; // world x of the feet centre; feet stand on row FLOOR_Y - 1
+
+  // Crystal target (built once into a mask: 1 outline, 2 body, 3 highlight)
+  const CW = 14, CH = 13, CRX = 109, CRY = FLOOR_Y - CH;
+  const crystal = new Uint8Array(CW * CH);
+  const TGX = CRX + 7, TGY = CRY + 6;
+
+  const SEED = new Int32Array([0x9e3779b9 | 0]);
+  // Returns a small integer (0..65535) so the value never needs boxing across calls;
+  // callers scale it with INV16 to get [0, 1).
+  const INV16 = 1 / 65536;
+  function rnd16() {
+    let x = SEED[0];
+    x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+    SEED[0] = x;
+    return (x >>> 8) & 0xffff;
+  }
+
+  const BAYER = new Uint8Array([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]);
+
+  // ==================================================================
+  // Static background (built once)
+  // ==================================================================
+  const NSTARS = 26;
+  const starX = new Uint8Array(NSTARS), starY = new Uint8Array(NSTARS);
+  const starPh = new Uint8Array(NSTARS), starBig = new Uint8Array(NSTARS);
+
+  (function buildBackground() {
+    const MX = 22, MY = 17;
+    for (let y = 0; y < FLOOR_Y; y++) {
+      for (let x = 0; x < W; x++) {
+        const v = (y / (FLOOR_Y - 1)) * 3;
+        const b = Math.floor(v);
+        let idx = Math.min(3, b + ((v - b) * 16 > BAYER[(y & 3) * 4 + (x & 3)] ? 1 : 0));
+        const dx = x - MX, dy = y - MY, d = Math.sqrt(dx * dx + dy * dy);
+        if (d > 7.5 && d < 11.5) idx = Math.min(3, idx + (d < 9.5 ? 1 : ((x + y) & 1)));
+        if (d <= 7.2) idx = (d > 4.8 && dx + dy > 2) ? MOON_SHADE : MOON;
+        bg[y * W + x] = idx;
+      }
+    }
+    const craters = [1, -2, 2, -2, -2, 2, 3, 3, -3, -1, 0, 3];
+    for (let i = 0; i < craters.length; i += 2) bg[(MY + craters[i + 1]) * W + MX + craters[i]] = MOON_SHADE;
+
+    // distant hills
+    for (let x = 0; x < W; x++) {
+      const h = (Math.round(5 + 2.5 * Math.sin(x * 0.061 + 0.4) + 1.5 * Math.sin(x * 0.17 + 2)) | 0);
+      for (let y = FLOOR_Y - h; y < FLOOR_Y; y++) bg[y * W + x] = y === FLOOR_Y - h ? SKY2 : SKY1;
+    }
+
+    // stone floor
+    for (let y = FLOOR_Y; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let c;
+        if (y === FLOOR_Y) c = STONE_LIGHT;
+        else {
+          const r = Math.floor((y - FLOOR_Y - 1) / 5), ly = (y - FLOOR_Y - 1) % 5, lx = (x + (r & 1) * 6) % 12;
+          if (ly === 4 || lx === 11) c = r === 0 ? STONE_DARK : INK;
+          else if (r === 0) c = (lx === 0 && ly < 3) ? STONE_LIGHT : STONE;
+          else if (r === 1) c = ((x + y) & 1) ? STONE : STONE_DARK;
+          else c = STONE_DARK;
+        }
+        bg[y * W + x] = c;
+      }
+    }
+    // contact shadow under the wizard
+    for (let x = WIZX - 9; x <= WIZX + 9; x++) bg[FLOOR_Y * W + x] = Math.abs(x - WIZX) < 6 ? STONE_DARK : STONE;
+    for (let x = WIZX - 5; x <= WIZX + 5; x++) bg[(FLOOR_Y + 1) * W + x] = STONE_DARK;
+    // shadow under the crystal
+    for (let x = CRX; x < CRX + CW; x++) bg[FLOOR_Y * W + x] = STONE;
+
+    // stars (kept clear of the moon and the wizard's head)
+    let n = 0;
+    while (n < NSTARS) {
+      const x = Math.floor((rnd16() * INV16) * W), y = 2 + Math.floor((rnd16() * INV16) * 56);
+      if ((x - MX) * (x - MX) + (y - MY) * (y - MY) < 150) continue;
+      if (x > 18 && x < 60 && y > 30) continue;
+      starX[n] = x; starY[n] = y; starPh[n] = Math.floor((rnd16() * INV16) * 16); starBig[n] = n < 5 ? 1 : 0;
+      n++;
+    }
+
+    // crystal shards
+    const shards = [3, 1, 7, 7, 1, 12, 11, 1, 5]; // cx, halfMax, height
+    for (let s = 0; s < shards.length; s += 3) {
+      const cx = shards[s], hm = shards[s + 1], h = shards[s + 2];
+      const top = CH - h;
+      for (let y = top; y < CH; y++) {
+        const half = Math.min(hm, (y - top) >> 1);
+        for (let x = cx - half; x <= cx + half; x++) crystal[y * CW + x] = (x === cx - half && half > 0) || (y - top < 2) ? 3 : 2;
+      }
+    }
+    const tmp = crystal.slice();
+    for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
+      const i = y * CW + x;
+      if (tmp[i]) continue;
+      if ((x > 0 && tmp[i - 1]) || (x < CW - 1 && tmp[i + 1]) || (y > 0 && tmp[i - CW]) || (y < CH - 1 && tmp[i + CW])) crystal[i] = 1;
+    }
+  })();
+
+  // ==================================================================
+  // Pose + state machine
+  // ==================================================================
+  const ARM = 0, STAFF = 1, TILT = 2, SWAY = 3, BEND = 4, CROUCH = 5, NP = 6;
+  const POSE_IDLE   = new Float32Array([0.55, 0.08,  0,  0.0, 1.0, 0]);
+  const POSE_CHARGE = new Float32Array([2.35, -0.15, -1, -1.5, 1.8, 0]);
+  const POSE_CAST   = new Float32Array([1.55, 1.05,  0,  2.5, 0.3, 1]);
+  const P = new Float32Array(NP), P0 = new Float32Array(NP);
+
+  const S_IDLE = 0, S_CHARGE = 1, S_CAST = 2, S_RECOVER = 3;
+  const DUR = [110, 84, 34, 54];          // ticks per state (60 Hz)
+  const TRANS = [1, 36, 5, 40];           // ticks to reach the state's key pose
+  const TARGET = [POSE_IDLE, POSE_CHARGE, POSE_CAST, POSE_IDLE];
+  const POSE_STEP = 5;                    // pose is sampled every 5 ticks -> 12 fps sprite feel
+
+  let tick = 0, state = S_IDLE, stT = 0;
+  let bob = 0, beardOff = 0, gemLevel = 0, gemPulse = 0;
+
+  // Mutable floating-point state lives in a typed array: V8 boxes doubles held in closure
+  // variables into fresh heap numbers on every write, typed-array slots are written in place.
+  const F = new Float64Array(14);
+  const GLOW = 2, TREMBLE = 3, SDX = 4, SDY = 5;
+  const PBX = 6, PBY = 7, PVX = 8, PVY = 9, PNX = 10, PNY = 11, PRX = 12, PRY = 13;
+  F[GLOW] = 9;
+
+
+  // Rig (sprite-local integer coordinates, recomputed every tick)
+  let yTop = 0, headTop = 0, shX = 0, shY = 0, hx = 0, hy = 0;
+  let sbx = 0, sby = 0, stx = 0, sty = 0, gx = 0, gy = 0;
+  let gemWX = 0, gemWY = 0;
+
+  function computeRig() {
+    const b = bob + (Math.round(P[CROUCH]) | 0);
+    yTop = -20 + b;
+    headTop = yTop - 5;
+    shX = 1; shY = yTop + 2;
+    const a = P[ARM];
+    hx = (Math.round(shX + Math.sin(a) * 8) | 0);
+    hy = (Math.round(shY + Math.cos(a) * 8) | 0);
+    const s = P[STAFF] + F[TREMBLE];
+    F[SDX] = Math.sin(s); F[SDY] = -Math.cos(s);
+    sbx = (Math.round(hx - F[SDX] * 11) | 0); sby = (Math.round(hy - F[SDY] * 11) | 0);
+    stx = (Math.round(hx + F[SDX] * 16) | 0); sty = (Math.round(hy + F[SDY] * 16) | 0);
+    gx = (Math.round(hx + F[SDX] * 18) | 0); gy = (Math.round(hy + F[SDY] * 18) | 0);
+    gemWX = WIZX + gx; gemWY = FLOOR_Y - 1 + gy;
+  }
+
+  function enter(s) {
+    state = s; stT = 0;
+    P0.set(P);
+    if (s === S_CAST) onCast();
+  }
+
+  function updatePose() {
+    const tq = stT - (stT % POSE_STEP);
+    let k = Math.min(1, tq / TRANS[state]);
+    if (state === S_CAST) { const u = 1 - k; k = 1 - u * u * u; }       // ease-out cubic
+    else if (k < 0.5) k = 4 * k * k * k;                                 // ease-in-out cubic
+    else { const u = -2 * k + 2; k = 1 - u * u * u / 2; }
+    const T = TARGET[state];
+    for (let i = 0; i < NP; i++) P[i] = P0[i] + (T[i] - P0[i]) * k;
+    const frame = (stT / POSE_STEP) | 0;
+    bob = state === S_IDLE ? ((stT / 30) | 0) & 1 : 0;
+    if (state === S_IDLE) beardOff = (((stT + 15) / 30) | 0) & 1;
+    else if (state === S_CHARGE) beardOff = -1 - (frame & 1);
+    else if (state === S_CAST) beardOff = -2;
+    else beardOff = stT < 20 ? -1 : 0;
+    F[TREMBLE] = state === S_CHARGE && stT > 30 ? ((frame & 1) ? 0.035 : -0.035) : 0;
+  }
+
+  // ==================================================================
+  // Particles (pooled, struct-of-arrays)
+  // ==================================================================
+  const PN = 384;
+  const pX = new Float32Array(PN), pY = new Float32Array(PN), pVX = new Float32Array(PN), pVY = new Float32Array(PN);
+  const pLife = new Float32Array(PN), pMax = new Float32Array(PN), pAng = new Float32Array(PN), pRad = new Float32Array(PN);
+  const pType = new Uint8Array(PN), pRamp = new Uint8Array(PN);
+  const T_ORBIT = 1, T_SPARK = 2, T_TRAIL = 3, T_EMBER = 4;
+  let pNext = 0;
+
+  // Float arguments go through a scratch typed array (SA) rather than call parameters,
+  // so calling spawn never boxes a double.
+  const SA = new Float64Array(5);
+  const SX = 0, SY = 1, SVX = 2, SVY = 3, SLIFE = 4;
+  function spawn(type, ramp) {
+    let i = pNext, n = PN;
+    while (n-- > 0 && pType[i] !== 0) i = (i + 1) % PN;
+    pType[i] = type; pX[i] = SA[SX]; pY[i] = SA[SY]; pVX[i] = SA[SVX]; pVY[i] = SA[SVY];
+    pLife[i] = SA[SLIFE]; pMax[i] = SA[SLIFE]; pRamp[i] = ramp; pAng[i] = 0; pRad[i] = 0;
+    pNext = (i + 1) % PN;
+    return i;
+  }
+
+  function burst(x, y, count, speed, lift, pinkChance) {
+    for (let k = 0; k < count; k++) {
+      const a = (rnd16() * INV16) * Math.PI * 2, v = 0.4 + (rnd16() * INV16) * speed;
+      SA[SX] = x; SA[SY] = y; SA[SVX] = Math.cos(a) * v; SA[SVY] = Math.sin(a) * v - lift; SA[SLIFE] = 14 + (rnd16() * INV16) * 26; spawn(T_SPARK, (rnd16() * INV16) < pinkChance ? 1 : 0);
+    }
+  }
+
+  // Projectile + effect timers
+  let prOn = 0, prT = 0;
+  let castFlash = 0, impFlash = 0, crysT = 0, shakeT = 0, shakeX = 0, shakeY = 0;
+
+  function onCast() {
+    castFlash = 10; shakeT = 12;
+    // orbiting sparks are flung outward
+    for (let i = 0; i < PN; i++) {
+      if (pType[i] !== T_ORBIT) continue;
+      const a = pAng[i], v = 1 + (rnd16() * INV16) * 1.5;
+      pType[i] = T_SPARK; pVX[i] = Math.cos(a) * v; pVY[i] = Math.sin(a) * v;
+      pLife[i] = pMax[i] = 16 + (rnd16() * INV16) * 14;
+    }
+    burst(gemWX, gemWY, 44, 2.3, 0.3, 0.3);
+    for (let k = 0; k < 10; k++) { SA[SX] = gemWX; SA[SY] = gemWY; SA[SVX] = ((rnd16() * INV16) - 0.5) * 1.2; SA[SVY] = -(rnd16() * INV16) * 0.8; SA[SLIFE] = 30 + (rnd16() * INV16) * 20; spawn(T_EMBER, 2); }
+    prOn = 1; prT = 0; F[PBX] = gemWX + 1; F[PBY] = gemWY;
+    const dx = TGX - F[PBX], dy = TGY - F[PBY], d = Math.sqrt(dx * dx + dy * dy);
+    F[PVX] = dx / d * 2.4; F[PVY] = dy / d * 2.4; F[PNX] = -dy / d; F[PNY] = dx / d;
+    F[PRX] = F[PBX]; F[PRY] = F[PBY];
+  }
+
+  function onImpact() {
+    prOn = 0; crysT = 44; impFlash = 8;
+    if (shakeT < 4) shakeT = 4;
+    for (let k = 0; k < 30; k++) {
+      const a = Math.PI + ((rnd16() * INV16) - 0.5) * Math.PI * 1.4, v = 0.5 + (rnd16() * INV16) * 2;
+      SA[SX] = F[PRX]; SA[SY] = F[PRY]; SA[SVX] = Math.cos(a) * v; SA[SVY] = -Math.abs(Math.sin(a) * v) - 0.4; SA[SLIFE] = 16 + (rnd16() * INV16) * 22; spawn(T_SPARK, (rnd16() * INV16) < 0.35 ? 1 : 0);
+    }
+    for (let k = 0; k < 8; k++) { SA[SX] = TGX + ((rnd16() * INV16) - 0.5) * 8; SA[SY] = TGY; SA[SVX] = ((rnd16() * INV16) - 0.5) * 0.6; SA[SVY] = -0.3 - (rnd16() * INV16) * 0.5; SA[SLIFE] = 36 + (rnd16() * INV16) * 24; spawn(T_EMBER, 2); }
+  }
+
+  // ==================================================================
+  // Fixed-step update (60 Hz)
+  // ==================================================================
+  function update() {
+    tick++; stT++;
+    if (stT >= DUR[state]) enter((state + 1) & 3);
+    updatePose();
+    computeRig();
+
+    // gem light radius + brightness
+    if (state === S_IDLE) { F[GLOW] = 9 + ((tick >> 4) & 1); gemLevel = 0; }
+    else if (state === S_CHARGE) { const k = stT / DUR[S_CHARGE]; F[GLOW] = 9 + 14 * k * k + ((tick >> 2) & 1) * 2; gemLevel = 1; }
+    else if (state === S_CAST) { F[GLOW] = 34 - stT * 0.5; gemLevel = 2; }
+    else { F[GLOW] = 17 - 8 * (stT / DUR[S_RECOVER]); gemLevel = stT < 16 ? 1 : 0; }
+
+    // charge: sparks spiral in, embers rise around the feet
+    if (state === S_CHARGE && stT > 8 && (stT > 56 || (stT & 1) === 0)) {
+      const r = 11 + (rnd16() * INV16) * 9, inward = 0.18 + (rnd16() * INV16) * 0.14;
+      SA[SX] = gemWX; SA[SY] = gemWY; SA[SVX] = 0.1 + (rnd16() * INV16) * 0.08; SA[SVY] = inward; SA[SLIFE] = r / inward; const i = spawn(T_ORBIT, (rnd16() * INV16) < 0.75 ? 0 : 1);
+      pAng[i] = (rnd16() * INV16) * Math.PI * 2; pRad[i] = r;
+    }
+    if (state === S_CHARGE && stT % 7 === 0) { SA[SX] = WIZX + ((rnd16() * INV16) - 0.5) * 26; SA[SY] = FLOOR_Y - 1; SA[SVX] = 0; SA[SVY] = -0.25 - (rnd16() * INV16) * 0.3; SA[SLIFE] = 40 + (rnd16() * INV16) * 20; spawn(T_EMBER, (rnd16() * INV16) < 0.5 ? 0 : 2); }
+
+    // particles
+    for (let i = 0; i < PN; i++) {
+      const t = pType[i];
+      if (t === 0) continue;
+      if (--pLife[i] <= 0) { pType[i] = 0; continue; }
+      if (t === T_ORBIT) {
+        pAng[i] += pVX[i]; pRad[i] -= pVY[i];
+        if (pRad[i] < 1) { pType[i] = 0; gemPulse = 3; continue; }
+        pX[i] = gemWX + Math.cos(pAng[i]) * pRad[i];
+        pY[i] = gemWY + Math.sin(pAng[i]) * pRad[i] * 0.85;
+      } else if (t === T_SPARK) {
+        pVX[i] *= 0.92; pVY[i] = pVY[i] * 0.92 + 0.03;
+        pX[i] += pVX[i]; pY[i] += pVY[i];
+        if (pY[i] > FLOOR_Y - 1) { pY[i] = FLOOR_Y - 1; pVY[i] *= -0.4; }
+      } else if (t === T_TRAIL) {
+        pVX[i] *= 0.9; pVY[i] *= 0.9;
+        pX[i] += pVX[i]; pY[i] += pVY[i];
+      } else {
+        pVX[i] *= 0.97; pVY[i] = pVY[i] * 0.985 - 0.006;
+        pX[i] += pVX[i] + Math.sin((tick + i * 7) * 0.08) * 0.08; pY[i] += pVY[i];
+      }
+    }
+
+    // projectile
+    if (prOn) {
+      prT++;
+      F[PBX] += F[PVX]; F[PBY] += F[PVY];
+      const w = Math.sin(prT * 0.55) * 1.3;
+      F[PRX] = F[PBX] + F[PNX] * w; F[PRY] = F[PBY] + F[PNY] * w;
+      SA[SX] = F[PRX] - F[PVX] * 0.5; SA[SY] = F[PRY]; SA[SVX] = -F[PVX] * 0.15 + ((rnd16() * INV16) - 0.5) * 0.2; SA[SVY] = ((rnd16() * INV16) - 0.5) * 0.3; SA[SLIFE] = 12 + (rnd16() * INV16) * 6; spawn(T_TRAIL, 0);
+      if (prT % 3 === 0) { SA[SX] = F[PRX]; SA[SY] = F[PRY]; SA[SVX] = ((rnd16() * INV16) - 0.5) * 0.8; SA[SVY] = ((rnd16() * INV16) - 0.5) * 0.8; SA[SLIFE] = 14; spawn(T_SPARK, 1); }
+      if (F[PBX] >= TGX - 1) onImpact();
+    }
+
+    if (castFlash > 0) castFlash--;
+    if (impFlash > 0) impFlash--;
+    if (crysT > 0) crysT--;
+    if (gemPulse > 0) gemPulse--;
+    if (shakeT > 0) {
+      shakeT--;
+      const amp = shakeT > 5 ? 2 : 1;
+      shakeX = Math.round(((rnd16() * INV16) * 2 - 1) * amp) | 0;
+      shakeY = Math.round(((rnd16() * INV16) * 2 - 1) * amp) | 0;
+    } else { shakeX = 0; shakeY = 0; }
+  }
+
+  // ==================================================================
+  // Sprite drawing (sprite-local coords: feet centre = 0,0; y up is negative)
+  // ==================================================================
+  function sp(x, y, c) {
+    x += OX; y += OY;
+    if (x >= 0 && x < SW && y >= 0 && y < SH) spr[y * SW + x] = c;
+  }
+  function spLine(x0, y0, x1, y1, c) {
+    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+    for (;;) {
+      sp(x0, y0, c);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+  }
+
+  function drawWizard() {
+    spr.fill(0);
+    const sway = P[SWAY], bend = P[BEND], tilt = (Math.round(P[TILT]) | 0);
+
+    // robe (two-shade body, lit front edge, belt, gold hem trim)
+    const rows = -1 - yTop;
+    for (let y = yTop; y <= -1; y++) {
+      const t = (y - yTop) / rows;
+      const hw = (Math.round(3.5 + 4.5 * t) | 0);
+      const sh = (Math.round(sway * t * t) | 0);
+      const L = -hw + sh, R = hw - 1 + sh + (t > 0.5 ? 1 : 0);
+      const darkEnd = L + (Math.round((R - L) * 0.38) | 0);
+      const fold = (Math.round(sh * 0.5) | 0) + 1 + (t > 0.75 ? 1 : 0);
+      for (let x = L; x <= R; x++) {
+        let c = x <= darkEnd ? ROBE_DARK : ROBE_MID;
+        if (x === R && t > 0.05 && t < 0.92) c = ROBE_LIGHT;
+        if (t > 0.4 && x === fold) c = ROBE_DARK;
+        if (y === yTop) c = ROBE_DARK;
+        if (y === yTop + 7) c = (x === R - 1 || x === R - 2) ? GOLD : GOLD_DARK;
+        if (y === -2) c = (x & 1) ? GOLD : GOLD_DARK;
+        if (y === -1) c = ROBE_DARK;
+        sp(x, y, c);
+      }
+    }
+    // boots
+    sp(-4, 0, WOOD_DARK); sp(-3, 0, WOOD_DARK); sp(-2, 0, WOOD_DARK);
+    sp(4, 0, WOOD_DARK); sp(5, 0, WOOD_DARK); sp(6, 0, WOOD_DARK); sp(7, 0, WOOD_DARK);
+
+    // head: hair behind, face, brow, eye, nose
+    for (let y = headTop + 1; y <= headTop + 4; y++) { sp(-2, y, BEARD_SHADE); sp(-1, y, BEARD_SHADE); }
+    for (let y = headTop + 1; y <= headTop + 3; y++) for (let x = 0; x <= 4; x++) sp(x, y, SKIN);
+    sp(2, headTop + 1, BEARD); sp(3, headTop + 1, BEARD); sp(4, headTop + 1, BEARD);
+    sp(3, headTop + 2, INK);
+    sp(5, headTop + 3 + tilt, SKIN);
+
+    // beard (long, tapering, tip sways)
+    const bTop = headTop + 4, bLen = yTop + 9 - bTop;
+    for (let k = 0; k <= bLen; k++) {
+      const f = k / bLen;
+      const w = k <= 2 ? 6 : Math.max(1, 6 - (Math.round((k - 2) * 0.65) | 0));
+      const xs = (Math.round(f * 1.5 + beardOff * f * f - (tilt < 0 ? -f : 0)) | 0);
+      for (let x = xs; x < xs + w; x++) sp(x, bTop + k, x === xs ? BEARD_SHADE : ((k > 3 && x === xs + 2 && (k & 1)) ? BEARD_SHADE : BEARD));
+    }
+    sp(6, bTop, BEARD); // moustache tip
+
+    // hat: curled brim, gold band, bent cone with drooping tip, star
+    for (let x = -5; x <= 6; x++) sp(x, headTop, x <= -2 ? ROBE_DARK : (x >= 5 ? ROBE_LIGHT : ROBE_MID));
+    sp(-6, headTop + 1, ROBE_DARK); sp(7, headTop + 1, ROBE_MID);
+    for (let x = -3; x <= 4; x++) sp(x, headTop - 1, (x === 1 || x === 2) ? GOLD : GOLD_DARK);
+    let tipX = 0;
+    for (let k = 0; k <= 8; k++) {
+      const p = k / 8, hwc = 3.6 * (1 - p), cx = 0.5 - bend * 3.5 * p * p;
+      const L = (Math.round(cx - hwc) | 0);
+      let R = (Math.round(cx + hwc * 0.9) | 0);
+      if (R < L) R = L;
+      const y = headTop - 2 - k;
+      for (let x = L; x <= R; x++) sp(x, y, (x - L) < (R - L + 1) * 0.4 ? ROBE_DARK : (x === R && R > L ? ROBE_LIGHT : ROBE_MID));
+      if (k === 3) sp((Math.round(cx) | 0) + 1, y, GOLD);
+      tipX = (Math.round(cx) | 0);
+    }
+    const droop = (Math.round(bend * 1.5) | 0);
+    for (let j = 1; j <= droop; j++) sp(tipX - j, headTop - 10 + (j >= 2 ? 1 : 0), ROBE_MID);
+
+    // staff (2px, dark side offset)
+    const vertical = Math.abs(F[SDX]) < Math.abs(F[SDY]);
+    spLine(sbx + (vertical ? 1 : 0), sby + (vertical ? 0 : 1), stx + (vertical ? 1 : 0), sty + (vertical ? 0 : 1), WOOD_DARK);
+    spLine(sbx, sby, stx, sty, WOOD);
+
+    // arm: sleeve with dark underside, light cuff, fist gripping the staff
+    spLine(shX, shY + 1, hx, hy + 1, ROBE_DARK);
+    spLine(shX, shY, hx, hy, ROBE_MID);
+    const a = P[ARM];
+    const cfx = (Math.round(hx - Math.sin(a) * 2) | 0), cfy = (Math.round(hy - Math.cos(a) * 2) | 0);
+    sp(cfx, cfy, ROBE_LIGHT); sp(cfx, cfy + 1, ROBE_LIGHT); sp(cfx - 1, cfy + 1, ROBE_MID);
+    sp(hx, hy, SKIN); sp(hx + 1, hy, SKIN); sp(hx, hy + 1, SKIN); sp(hx + 1, hy + 1, SKIN);
+
+    // claw + gem
+    const nx = (Math.round(-F[SDY] * 2) | 0), ny = (Math.round(F[SDX] * 2) | 0);
+    sp(stx + nx, sty + ny, WOOD); sp(stx - nx, sty - ny, WOOD);
+    sp(gx + nx, gy + ny, WOOD_DARK); sp(gx - nx, gy - ny, WOOD_DARK);
+    const flick = ((tick >> 2) & 1) === 1 || gemPulse > 0;
+    const core = gemLevel === 2 ? WHITE : gemLevel === 1 ? (flick ? WHITE : MAGIC_LIGHT) : (flick ? MAGIC_LIGHT : MAGIC);
+    const arms = gemLevel === 2 ? MAGIC_LIGHT : gemLevel === 1 ? MAGIC : MAGIC_BLUE;
+    sp(gx - 1, gy, arms); sp(gx + 1, gy, arms); sp(gx, gy - 1, arms); sp(gx, gy + 1, arms);
+    sp(gx, gy, core);
+
+    // outline pass
+    for (let y = 0; y < SH; y++) {
+      for (let x = 0; x < SW; x++) {
+        const i = y * SW + x, v = spr[i];
+        if (v) { sprO[i] = v; continue; }
+        sprO[i] = ((x > 0 && spr[i - 1]) || (x < SW - 1 && spr[i + 1]) || (y > 0 && spr[i - SW]) || (y < SH - 1 && spr[i + SW])) ? INK : 0;
+      }
+    }
+
+    // rim light from the gem: brighten edge pixels that face it
+    const gsx = gx + OX, gsy = gy + OY;
+    const R2 = F[GLOW] * F[GLOW], Rin2 = F[GLOW] >= 14 ? R2 * 0.3 : -1;
+    for (let y = 0; y < SH; y++) {
+      for (let x = 0; x < SW; x++) {
+        const i = y * SW + x, v = sprO[i];
+        spr[i] = v;
+        if (v === 0 || IS_MAGIC[v]) continue;
+        const dx = gsx - x, dy = gsy - y, d2 = dx * dx + dy * dy;
+        if (d2 > R2 || d2 === 0) continue;
+        const adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+        let edge = false;
+        if (dx !== 0 && adx * 2 >= ady) {
+          const nxp = x + (dx > 0 ? 1 : -1);
+          const n = nxp < 0 || nxp >= SW ? 0 : sprO[y * SW + nxp];
+          edge = n === 0 || (v !== INK && n === INK);
+        }
+        if (!edge && dy !== 0 && ady * 2 >= adx) {
+          const nyp = y + (dy > 0 ? 1 : -1);
+          const n = nyp < 0 || nyp >= SH ? 0 : sprO[nyp * SW + x];
+          edge = n === 0 || (v !== INK && n === INK);
+        }
+        if (edge) spr[i] = d2 < Rin2 ? LIT2[v] : LIT1[v];
+      }
+    }
+  }
+
+  // ==================================================================
+  // Rendering into the indexed framebuffer
+  // ==================================================================
+  function px(x, y, c) {
+    if (x >= 0 && x < W && y >= 0 && y < H) fb[y * W + x] = c;
+  }
+  function pxSky(x, y, c) {
+    if (x >= 0 && x < W && y >= 0 && y < H && fb[y * W + x] <= SKY3) fb[y * W + x] = c;
+  }
+  function ring(cx, cy, r10, c) {
+    const r = r10 * 0.1, R = Math.ceil(r) + 1;
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d > r - 0.55 && d < r + 0.55) px(cx + dx, cy + dy, c);
+    }
+  }
+  function disc(cx, cy, r10, c) {
+    const r = r10 * 0.1, R = Math.ceil(r);
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) if (dx * dx + dy * dy <= r * r) px(cx + dx, cy + dy, c);
+  }
+
+  function render() {
+    const sx = shakeX, sy = shakeY;
+
+    // background (shifted when shaking; edges clamp)
+    if (sx === 0 && sy === 0) fb.set(bg);
+    else {
+      for (let y = 0; y < H; y++) {
+        let yy = y - sy; yy = yy < 0 ? 0 : yy >= H ? H - 1 : yy;
+        for (let x = 0; x < W; x++) {
+          let xx = x - sx; xx = xx < 0 ? 0 : xx >= W ? W - 1 : xx;
+          fb[y * W + x] = bg[yy * W + xx];
+        }
+      }
+    }
+
+    // 1-frame sky flash on cast / impact
+    if (castFlash >= 9 || impFlash >= 7) {
+      for (let i = 0; i < FLOOR_Y * W; i++) if (fb[i] <= SKY2) fb[i] += 1;
+    }
+
+    // stars
+    for (let i = 0; i < NSTARS; i++) {
+      const lvl = ((tick >> 3) + starPh[i]) & 15;
+      const x = starX[i] + sx, y = starY[i] + sy;
+      const c = lvl === 0 ? WHITE : (lvl === 1 || lvl === 15) ? BEARD_SHADE : STAR_DIM;
+      pxSky(x, y, c);
+      if (starBig[i] && lvl === 0) { pxSky(x - 1, y, STAR_DIM); pxSky(x + 1, y, STAR_DIM); pxSky(x, y - 1, STAR_DIM); pxSky(x, y + 1, STAR_DIM); }
+    }
+
+    // floor light from the gem, the projectile and the struck crystal
+    const fy = FLOOR_Y + sy;
+    if (fy >= 0 && fy < H) {
+      const gr = F[GLOW] - 10;
+      for (let x = 0; x < W; x++) {
+        const wx = x - sx;
+        let c = 0;
+        if (gr > 0) { const d = Math.abs(wx - gemWX); if (d < gr) c = d < gr * 0.45 ? MAGIC_BLUE : MAGIC_DARK; }
+        if (prOn && F[PRY] > 50 && Math.abs(wx - F[PRX]) < 5) c = MAGIC_DARK;
+        if (crysT > 0) { const d = Math.abs(wx - TGX); const r = 5 + (crysT >> 3); if (d < r) c = d < r * 0.5 && crysT > 14 ? MAGIC : MAGIC_BLUE; }
+        if (c) fb[fy * W + x] = c;
+      }
+    }
+
+    // crystal target
+    {
+      const shimmer = ((tick >> 4) + 3) % 9 === 0;
+      const body = crysT > 28 ? MAGIC_LIGHT : crysT > 14 ? MAGIC : crysT > 0 ? MAGIC_BLUE : MAGIC_DARK;
+      const hi = crysT > 28 ? WHITE : crysT > 0 ? MAGIC_LIGHT : (shimmer ? MAGIC : MAGIC_BLUE);
+      for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
+        const m = crystal[y * CW + x];
+        if (m) px(CRX + x + sx, CRY + y + sy, m === 1 ? INK : m === 2 ? body : hi);
+      }
+    }
+
+    // wizard sprite
+    drawWizard();
+    const ox = WIZX - OX + sx, oy = FLOOR_Y - 1 - OY + sy;
+    for (let y = 0; y < SH; y++) {
+      const wy = oy + y;
+      if (wy < 0 || wy >= H) continue;
+      for (let x = 0; x < SW; x++) {
+        const v = spr[y * SW + x];
+        if (v === 0) continue;
+        const wx = ox + x;
+        if (wx >= 0 && wx < W) fb[wy * W + wx] = v;
+      }
+    }
+
+    // gem halo over the sky only
+    const gwx = gemWX + sx, gwy = gemWY + sy;
+    const hr = gemLevel === 2 ? 4 : gemLevel === 1 ? 3.5 + ((tick >> 2) & 1) : 2.5;
+    const HR = Math.ceil(hr);
+    for (let dy = -HR; dy <= HR; dy++) for (let dx = -HR; dx <= HR; dx++) {
+      const d2 = dx * dx + dy * dy;
+      if (d2 < 4 || d2 > hr * hr) continue;
+      if (((gwx + dx + gwy + dy + (tick >> 2)) & 1) !== 0) continue;
+      pxSky(gwx + dx, gwy + dy, d2 < (hr - 1.2) * (hr - 1.2) ? MAGIC_BLUE : MAGIC_DARK);
+    }
+
+    // particles
+    for (let i = 0; i < PN; i++) {
+      const t = pType[i];
+      if (t === 0) continue;
+      const f = 1 - pLife[i] / pMax[i];
+      const stage = Math.min(4, (f * 5) | 0);
+      const c = RAMPS[pRamp[i] * 5 + stage];
+      const x = (Math.round(pX[i]) | 0) + sx, y = (Math.round(pY[i]) | 0) + sy;
+      px(x, y, c);
+      if (t === T_SPARK && stage === 0) { px(x - 1, y, RAMPS[pRamp[i] * 5 + 1]); px(x + 1, y, RAMPS[pRamp[i] * 5 + 1]); px(x, y - 1, RAMPS[pRamp[i] * 5 + 1]); px(x, y + 1, RAMPS[pRamp[i] * 5 + 1]); }
+    }
+
+    // projectile orb
+    if (prOn) {
+      const x = (Math.round(F[PRX]) | 0) + sx, y = (Math.round(F[PRY]) | 0) + sy;
+      const outer = ((tick >> 1) & 1) ? MAGIC : MAGIC_BLUE;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const m = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+        if (m === 2) px(x + dx, y + dy, outer);
+        else if (m === 1) px(x + dx, y + dy, MAGIC_LIGHT);
+      }
+      px(x, y, WHITE);
+    }
+
+    // cast burst at the gem
+    if (castFlash > 0) {
+      const k = 10 - castFlash;
+      if (castFlash > 6) disc(gwx, gwy, 22, WHITE);
+      ring(gwx, gwy, 20 + k * 15, castFlash > 6 ? WHITE : castFlash > 3 ? MAGIC_LIGHT : MAGIC);
+      if (castFlash > 3) ring(gwx, gwy, 10 + k * 8, MAGIC_LIGHT);
+    }
+    // impact burst at the crystal
+    if (impFlash > 0) {
+      const k = 8 - impFlash;
+      const ix = (Math.round(F[PRX]) | 0) + sx, iy = (Math.round(F[PRY]) | 0) + sy;
+      if (impFlash > 5) disc(ix, iy, 20, WHITE);
+      ring(ix, iy, 20 + k * 14, impFlash > 5 ? WHITE : impFlash > 2 ? MAGIC_LIGHT : MAGIC_PINK);
+    }
+
+    // indexed -> RGBA
+    for (let i = 0; i < W * H; i++) img32[i] = PAL32[fb[i]];
+    octx.putImageData(img, 0, 0);
+  }
+
+  // ==================================================================
+  // Display: largest integer scale that fits, centred
+  // ==================================================================
+  let scale = 1, dox = 0, doy = 0, ready = false;
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    screen.width = Math.max(1, Math.floor(screen.clientWidth * dpr));
+    screen.height = Math.max(1, Math.floor(screen.clientHeight * dpr));
+    scale = Math.max(1, Math.floor(Math.min(screen.width / W, screen.height / H)));
+    dox = Math.floor((screen.width - W * scale) / 2);
+    doy = Math.floor((screen.height - H * scale) / 2);
+    sctx.imageSmoothingEnabled = false;
+    // The image always lands on the same rectangle, so the letterbox only needs clearing here.
+    sctx.fillStyle = HEX[SKY0];
+    sctx.fillRect(0, 0, screen.width, screen.height);
+    if (ready) present();
+  }
+  function present() {
+    sctx.drawImage(off, dox, doy, W * scale, H * scale);
+  }
+  window.addEventListener('resize', resize);
+
+  // ==================================================================
+  // Main loop: fixed 60 Hz simulation, rAF presentation.
+  // Timing uses small integers only (1 unit = 1/3 ms, so one 60 Hz step is exactly 50 units):
+  // integer maths never boxes, even before V8 optimises this small function.
+  // Truncating the absolute timestamp (not each delta) keeps rounding from drifting.
+  // ==================================================================
+  const STEP_UNITS = 50;
+  let lastMs = -1, accUnits = 0;
+  function frame(now) {
+    const ms = now | 0;
+    if (lastMs < 0) lastMs = ms;
+    let dt = ms - lastMs;
+    lastMs = ms;
+    if (dt > 250) dt = 250;
+    accUnits += dt * 3;
+    while (accUnits >= STEP_UNITS) { update(); accUnits -= STEP_UNITS; }
+    render();
+    present();
+    requestAnimationFrame(frame);
+  }
+
+  P.set(POSE_IDLE);
+  computeRig();
+  resize();
+  render();
+  ready = true;
+  if (/[?&]capture\b/.test(location.search)) {
+    // Deterministic stepping for offline frame capture: __step(n) advances n ticks and draws.
+    window.__step = n => { for (let i = 0; i < n; i++) update(); render(); present(); };
+    window.__state = () => state;
+  } else {
+    requestAnimationFrame(frame);
+  }
+})();
+</script>
+</body>
+</html>
